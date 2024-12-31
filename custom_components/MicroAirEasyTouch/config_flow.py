@@ -12,7 +12,7 @@ from homeassistant.components.bluetooth import (
 )
 from homeassistant.config_entries import ConfigFlow
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.const import CONF_ADDRESS, CONF_PASSWORD
+from homeassistant.const import CONF_ADDRESS, CONF_PASSWORD, CONF_USERNAME
 
 from .MicroAirEasyTouch import MicroAirEasyTouchBluetoothDeviceData
 from .const import DOMAIN
@@ -35,7 +35,7 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle the bluetooth discovery step."""
         await self.async_set_unique_id(discovery_info.address)
         self._abort_if_unique_id_configured()
-        device = MicroAirEasyTouchBluetoothDeviceData(password=None)  # Initialize without password
+        device = MicroAirEasyTouchBluetoothDeviceData(password=None, email=None)
         if not device.supported(discovery_info):
             return self.async_abort(reason="not_supported")
         self._discovery_info = discovery_info
@@ -45,20 +45,22 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_password(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
-        """Handle password entry."""
+        """Handle password and email entry."""
         errors = {}
         if user_input is not None:
             try:
                 # Update the device with the password
                 assert self._discovered_device is not None
+                self._discovered_device._email = user_input[CONF_USERNAME]
                 self._discovered_device._password = user_input[CONF_PASSWORD]
                 return await self.async_step_bluetooth_confirm(user_input)
             except Exception:  # pylint: disable=broad-except
-                errors["base"] = "invalid_password"
+                errors["base"] = "invalid_auth"
 
         return self.async_show_form(
             step_id="password",
             data_schema=vol.Schema({
+                vol.Required(CONF_USERNAME): str,
                 vol.Required(CONF_PASSWORD): str,
             }),
             errors=errors,
@@ -92,7 +94,7 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
             address = user_input[CONF_ADDRESS]
             await self.async_set_unique_id(address, raise_on_progress=False)
             self._abort_if_unique_id_configured()
-            device = MicroAirEasyTouchBluetoothDeviceData(password=None)
+            device = MicroAirEasyTouchBluetoothDeviceData(password=None, email=None)
             self._discovered_device = device
             return await self.async_step_password()
 

@@ -38,10 +38,11 @@ class MicroAirEasyTouchSensor(StrEnum):
 class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
     """Data for MicroAirEasyTouch sensors."""
 
-    def __init__(self, password: str | None = None) -> None:
+    def __init__(self, password: str | None = None, email: str | None = None) -> None:
         """Initialize the data handler."""
         super().__init__()
         self._password = password
+        self._email = email
         self._client = None
         self._event = asyncio.Event()
         self._notification_count = 0
