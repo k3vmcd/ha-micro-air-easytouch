@@ -26,7 +26,7 @@ _LOGGER = logging.getLogger(__name__)
 class MicroAirEasyTouchSensor(StrEnum):
 
     FACE_PLATE_TEMPERATURE = "face_plate_temperature"
-    # SIGNAL_STRENGTH = "signal_strength"
+    SIGNAL_STRENGTH = "signal_strength"
     # BATTERY_PERCENT = "battery_percent"
     # TIMESTAMP = "timestamp"
 
