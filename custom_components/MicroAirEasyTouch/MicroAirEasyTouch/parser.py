@@ -18,7 +18,10 @@ from sensor_state_data.enum import StrEnum
 
 from .const import (
     UUIDS,
+    UPDATE_INTERVAL,
 )
+
+from typing import Optional
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -26,6 +29,8 @@ _LOGGER = logging.getLogger(__name__)
 class MicroAirEasyTouchSensor(StrEnum):
 
     FACE_PLATE_TEMPERATURE = "face_plate_temperature"
+    CURRENT_MODE_NUMBER = "current_mode_number"
+    CURRENT_MODE = "current_mode"
     SIGNAL_STRENGTH = "signal_strength"
     # BATTERY_PERCENT = "battery_percent"
     # TIMESTAMP = "timestamp"
@@ -33,16 +38,20 @@ class MicroAirEasyTouchSensor(StrEnum):
 class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
     """Data for MicroAirEasyTouch sensors."""
 
-    def __init__(self) -> None:
+    def __init__(self, password: str | None = None) -> None:
+        """Initialize the data handler."""
         super().__init__()
+        self._password = password
+        self._client = None
         self._event = asyncio.Event()
         self._notification_count = 0
+        self.modes = {0:"off",3:"cool_on",4:"heat",2:"cool",1:"fan",11:"auto"}
 
     def _start_update(self, service_info: BluetoothServiceInfo) -> None:
         """Update from BLE advertisement data."""
         _LOGGER.debug("Parsing MicroAirEasyTouch BLE advertisement data: %s", service_info)
         self.set_device_manufacturer("MicroAirEasyTouch")
-        self.set_device_type("TPMS")
+        self.set_device_type("Thermostat")
         name = f"{service_info.name} {short_address(service_info.address)}"
         self.set_device_name(name)
         self.set_title(name)
@@ -64,6 +73,9 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         """Helper for command events"""
         try:
             face_plate_temperature = data[12]
+            current_mode_number = data[15]
+            current_mode = self.modes[current_mode_number]
+
 
             self.update_sensor(
             key=str(MicroAirEasyTouchSensor.FACE_PLATE_TEMPERATURE),
@@ -71,6 +83,13 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             native_value=face_plate_temperature,
             device_class=SensorDeviceClass.TEMPERATURE,
             name="Face Plate Temperature",
+            ),
+            
+            self.update_sensor(
+            key=str(MicroAirEasyTouchSensor.CURRENT_MODE),
+            native_value=current_mode,
+            device_class=SensorDeviceClass.ENUM,
+            name="Current Mode",
             )
 
         except NameError:
@@ -89,6 +108,47 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             _LOGGER.warn("Event %s", self._event.is_set())
         return
 
+    async def authenticate(self, password: str) -> bool:
+        """Authenticate with the device using password."""
+        try:
+            # Convert password to bytes and send authentication
+            password_bytes = password.encode('utf-8')
+            
+            await self._client.write_gatt_char(
+                UUIDS["strangeCmd"],
+                password_bytes,
+                response=True
+            )
+            
+            _LOGGER.debug("Authentication sent successfully")
+            return True
+            
+        except Exception as e:
+            _LOGGER.error("Authentication failed: %s", str(e))
+            return False
+
+    async def connect(self, ble_device: BLEDevice) -> bool:
+        """Connect and authenticate with the device."""
+        try:
+            self._client = await establish_connection(
+                BleakClientWithServiceCache,
+                ble_device,
+                ble_device.address
+            )
+            
+            if await self.authenticate(self._password):
+                _LOGGER.info("Successfully connected and authenticated")
+                return True
+                
+            await self._client.disconnect()
+            return False
+            
+        except Exception as e:
+            _LOGGER.error("Connection failed: %s", str(e))
+            if self._client:
+                await self._client.disconnect()
+            return False
+
     async def async_poll(self, ble_device: BLEDevice) -> SensorUpdate:
         """
         Poll the device to retrieve any values we can't get from passive listening.
@@ -99,7 +159,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         )
         try:
             await client.start_notify(
-                CHARACTERISTIC_MicroAirEasyTouch_SENSORS, self.notification_handler
+                UUIDS["jsonReturn"], self.notification_handler
             )
             # Wait until all notifications are processed
             try:

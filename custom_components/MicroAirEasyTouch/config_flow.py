@@ -12,14 +12,14 @@ from homeassistant.components.bluetooth import (
 )
 from homeassistant.config_entries import ConfigFlow
 from homeassistant.data_entry_flow import FlowResult
-from homeassistant.const import CONF_ADDRESS
+from homeassistant.const import CONF_ADDRESS, CONF_PASSWORD
 
 from .MicroAirEasyTouch import MicroAirEasyTouchBluetoothDeviceData
 from .const import DOMAIN
 
 
 class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
-    """Handle a config flow for MicroAirEasyTouch"""
+    """Handle a config flow for MicroAirEasyTouch."""
 
     VERSION = 1
 
@@ -35,12 +35,34 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle the bluetooth discovery step."""
         await self.async_set_unique_id(discovery_info.address)
         self._abort_if_unique_id_configured()
-        device = MicroAirEasyTouchBluetoothDeviceData()
+        device = MicroAirEasyTouchBluetoothDeviceData(password=None)  # Initialize without password
         if not device.supported(discovery_info):
             return self.async_abort(reason="not_supported")
         self._discovery_info = discovery_info
         self._discovered_device = device
-        return await self.async_step_bluetooth_confirm()
+        return await self.async_step_password()
+
+    async def async_step_password(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle password entry."""
+        errors = {}
+        if user_input is not None:
+            try:
+                # Update the device with the password
+                assert self._discovered_device is not None
+                self._discovered_device._password = user_input[CONF_PASSWORD]
+                return await self.async_step_bluetooth_confirm(user_input)
+            except Exception:  # pylint: disable=broad-except
+                errors["base"] = "invalid_password"
+
+        return self.async_show_form(
+            step_id="password",
+            data_schema=vol.Schema({
+                vol.Required(CONF_PASSWORD): str,
+            }),
+            errors=errors,
+        )
 
     async def async_step_bluetooth_confirm(
         self, user_input: dict[str, Any] | None = None
@@ -52,13 +74,14 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
         discovery_info = self._discovery_info
         title = device.title or device.get_device_name() or discovery_info.name
         if user_input is not None:
-            return self.async_create_entry(title=title, data={})
+            return self.async_create_entry(title=title, data=user_input)
 
         self._set_confirm_only()
         placeholders = {"name": title}
         self.context["title_placeholders"] = placeholders
         return self.async_show_form(
-            step_id="bluetooth_confirm", description_placeholders=placeholders
+            step_id="bluetooth_confirm", 
+            description_placeholders=placeholders
         )
 
     async def async_step_user(
@@ -69,16 +92,16 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
             address = user_input[CONF_ADDRESS]
             await self.async_set_unique_id(address, raise_on_progress=False)
             self._abort_if_unique_id_configured()
-            return self.async_create_entry(
-                title=self._discovered_devices[address], data={}
-            )
+            device = MicroAirEasyTouchBluetoothDeviceData(password=None)
+            self._discovered_device = device
+            return await self.async_step_password()
 
         current_addresses = self._async_current_ids()
         for discovery_info in async_discovered_service_info(self.hass, False):
             address = discovery_info.address
             if address in current_addresses or address in self._discovered_devices:
                 continue
-            device = MicroAirEasyTouchBluetoothDeviceData()
+            device = MicroAirEasyTouchBluetoothDeviceData(password=None)
             if device.supported(discovery_info):
                 self._discovered_devices[address] = (
                     device.title or device.get_device_name() or discovery_info.name
