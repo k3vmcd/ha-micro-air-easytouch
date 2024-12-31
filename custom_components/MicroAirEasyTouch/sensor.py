@@ -111,7 +111,7 @@ async def async_setup_entry(
 
 
 class MicroAirEasyTouchBluetoothSensorEntity(
-    PassiveBluetoothProcessorEntity[PassiveBluetoothDataProcessor[str | int | None]],
+    PassiveBluetoothProcessorEntity[PassiveBluetoothDataProcessor[str, str | int | None]],
     SensorEntity,
 ):
     """Representation of a MicroAirEasyTouch sensor."""
