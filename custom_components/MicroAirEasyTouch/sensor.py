@@ -48,6 +48,12 @@ SENSOR_DESCRIPTIONS: dict[str, SensorEntityDescription] = {
         entity_category=EntityCategory.DIAGNOSTIC,
         entity_registry_enabled_default=False,
     ),
+    MicroAirEasyTouchSensor.CURRENT_MODE: SensorEntityDescription(
+        key=MicroAirEasyTouchSensor.CURRENT_MODE,
+        device_class=SensorDeviceClass.ENUM,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        entity_registry_enabled_default=False,
+    ),
     # MicroAirEasyTouchSensor.BATTERY_PERCENT: SensorEntityDescription(
     #     key=MicroAirEasyTouchSensor.BATTERY_PERCENT,
     #     device_class=SensorDeviceClass.BATTERY,
