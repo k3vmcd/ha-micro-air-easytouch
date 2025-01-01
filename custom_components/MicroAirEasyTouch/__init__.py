@@ -14,7 +14,11 @@ from homeassistant.components.bluetooth.active_update_processor import (
     ActiveBluetoothProcessorCoordinator,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import Platform
+from homeassistant.const import (
+    Platform,
+    CONF_PASSWORD,
+    CONF_USERNAME,
+)
 from homeassistant.core import CoreState, HomeAssistant
 
 from .MicroAirEasyTouch import MicroAirEasyTouchBluetoothDeviceData, SensorUpdate
@@ -29,7 +33,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up MicroAirEasyTouch BLE device from a config entry."""
     address = entry.unique_id
     assert address is not None
-    data = MicroAirEasyTouchBluetoothDeviceData()
+    data = MicroAirEasyTouchBluetoothDeviceData(
+        password=entry.data.get(CONF_PASSWORD),
+        email=entry.data.get(CONF_USERNAME)
+    )
 
     def _needs_poll(
         service_info: BluetoothServiceInfoBleak, last_poll: float | None

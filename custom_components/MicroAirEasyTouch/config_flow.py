@@ -76,7 +76,14 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
         discovery_info = self._discovery_info
         title = device.title or device.get_device_name() or discovery_info.name
         if user_input is not None:
-            return self.async_create_entry(title=title, data=user_input)
+            return self.async_create_entry(
+                title=title, 
+                data={
+                    CONF_USERNAME: self._discovered_device._email,
+                    CONF_PASSWORD: self._discovered_device._password,
+                    CONF_ADDRESS: discovery_info.address,
+                }
+            )
 
         self._set_confirm_only()
         placeholders = {"name": title}
