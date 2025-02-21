@@ -3,93 +3,84 @@
 from __future__ import annotations
 
 import logging
-
+from datetime import timedelta
+from typing import Final
 
 from homeassistant.components.bluetooth import (
-    BluetoothScanningMode,
     BluetoothServiceInfoBleak,
     async_ble_device_from_address,
 )
-from homeassistant.components.bluetooth.active_update_processor import (
-    ActiveBluetoothProcessorCoordinator,
-)
+
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     Platform,
     CONF_PASSWORD,
     CONF_USERNAME,
 )
-from homeassistant.core import CoreState, HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 
 from .MicroAirEasyTouch import MicroAirEasyTouchBluetoothDeviceData, SensorUpdate
+from .MicroAirEasyTouch.const import UPDATE_INTERVAL
 from .const import DOMAIN
 
-PLATFORMS: list[Platform] = [Platform.SENSOR]
+PLATFORMS: Final = [Platform.SENSOR]
+# PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 _LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
-    """Set up MicroAirEasyTouch BLE device from a config entry."""
+    """Set up MicroAirEasyTouch from a config entry."""
     address = entry.unique_id
     assert address is not None
-    data = MicroAirEasyTouchBluetoothDeviceData(
-        password=entry.data.get(CONF_PASSWORD),
-        email=entry.data.get(CONF_USERNAME)
-    )
+    password = entry.data.get(CONF_PASSWORD)
+    email = entry.data.get(CONF_USERNAME)
+    data = MicroAirEasyTouchBluetoothDeviceData(password=password, email=email)
 
-    def _needs_poll(
-        service_info: BluetoothServiceInfoBleak, last_poll: float | None
-    ) -> bool:
-        # Only poll if hass is running, we need to poll,
-        # and we actually have a way to connect to the device
-        return (
-            hass.state is CoreState.running
-            and data.poll_needed(service_info, last_poll)
-            and bool(
-                async_ble_device_from_address(
-                    hass, service_info.device.address, connectable=True
-                )
-            )
-        )
+# DataUpdateCoordinator for periodic polling
+    async def _async_update_data():
+        """Fetch data from the device."""
+        ble_device = async_ble_device_from_address(hass, address)
+        if not ble_device:
+            _LOGGER.debug("No BLE device found for address %s, skipping poll", address)
+            return None
+        try:
+            update = await data.async_poll(ble_device)
+            return update
+        except Exception as e:
+            _LOGGER.error("Failed to poll device: %s", e)
+            raise
 
-    async def _async_poll(service_info: BluetoothServiceInfoBleak) -> SensorUpdate:
-        # Make sure the device we have is one that we can connect with
-        # in case its coming from a passive scanner
-        if service_info.connectable:
-            connectable_device = service_info.device
-        elif device := async_ble_device_from_address(
-            hass, service_info.device.address, True
-        ):
-            connectable_device = device
-        else:
-            # We have no bluetooth controller that is in range of
-            # the device to poll it
-            raise RuntimeError(
-                f"No connectable device found for {service_info.device.address}"
-            )
-        return await data.async_poll(connectable_device)
-
-    coordinator = hass.data.setdefault(DOMAIN, {})[
-        entry.entry_id
-    ] = ActiveBluetoothProcessorCoordinator(
+    coordinator = DataUpdateCoordinator(
         hass,
         _LOGGER,
-        address=address,
-        mode=BluetoothScanningMode.PASSIVE,
-        update_method=data.update,
-        needs_poll_method=_needs_poll,
-        poll_method=_async_poll,
-        # We will take advertisements from non-connectable devices
-        # since we will trade the BLEDevice for a connectable one
-        # if we need to poll it
-        connectable=False,
+        name=f"MicroAirEasyTouch_{address}",
+        update_method=_async_update_data,
+        update_interval=timedelta(seconds=UPDATE_INTERVAL),
     )
+
+    # Store coordinator in hass.data
+    hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
+        "coordinator": coordinator,
+        "data": data,
+    }
+
+    # Handle initial device info from advertisements
+    @callback
+    def _handle_bluetooth_update(service_info: BluetoothServiceInfoBleak) -> SensorUpdate:
+        """Update device info from advertisements and trigger a refresh."""
+        if service_info.address == address:
+            data._start_update(service_info)  # Set device name dynamically
+            coordinator.async_set_updated_data(None)  # Trigger initial poll if needed
+
+    hass.bus.async_listen("bluetooth_service_info", _handle_bluetooth_update)
+
+    _LOGGER.debug("Starting coordinator for %s", address)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
-    entry.async_on_unload(
-        # only start after all platforms have had a chance to subscribe
-        coordinator.async_start()
-    )
+    await coordinator.async_config_entry_first_refresh()  # Start polling
+
     return True
 
 

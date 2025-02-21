@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import logging
+_LOGGER = logging.getLogger(__name__)
+
+
 from .MicroAirEasyTouch import MicroAirEasyTouchSensor, SensorUpdate
 
-from homeassistant import config_entries
+from homeassistant.config_entries import ConfigEntry
 from homeassistant.components.bluetooth.passive_update_processor import (
-    PassiveBluetoothDataProcessor,
+    # PassiveBluetoothDataProcessor,
     PassiveBluetoothDataUpdate,
-    PassiveBluetoothProcessorCoordinator,
-    PassiveBluetoothProcessorEntity,
+    # PassiveBluetoothProcessorCoordinator,
+    # PassiveBluetoothProcessorEntity,
 )
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -19,14 +23,17 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import (
     # PERCENTAGE,
-    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
-    EntityCategory,
-    UnitOfPressure,
+    # SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    # EntityCategory,
+    # Platform,
+    # UnitOfPressure,
     UnitOfTemperature,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.sensor import sensor_device_info_to_hass_device_info
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+from homeassistant.helpers.device_registry import DeviceInfo
 
 from .device import device_key_to_bluetooth_entity_key
 from .const import DOMAIN
@@ -38,29 +45,15 @@ SENSOR_DESCRIPTIONS: dict[str, SensorEntityDescription] = {
         key=MicroAirEasyTouchSensor.FACE_PLATE_TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.FAHRENHEIT,
         device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
         icon="mdi:thermometer-lines",
     ),
-    MicroAirEasyTouchSensor.SIGNAL_STRENGTH: SensorEntityDescription(
-        key=MicroAirEasyTouchSensor.SIGNAL_STRENGTH,
-        device_class=SensorDeviceClass.SIGNAL_STRENGTH,
-        native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
-        state_class=SensorStateClass.MEASUREMENT,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
-    ),
-    MicroAirEasyTouchSensor.CURRENT_MODE: SensorEntityDescription(
-        key=MicroAirEasyTouchSensor.CURRENT_MODE,
+    MicroAirEasyTouchSensor.MODE: SensorEntityDescription(
+        key=MicroAirEasyTouchSensor.MODE,
         device_class=SensorDeviceClass.ENUM,
-        entity_category=EntityCategory.DIAGNOSTIC,
-        entity_registry_enabled_default=False,
+        options=["off", "fan", "cool", "cool_on", "heat", "auto"],
+        icon="mdi:hvac",
     ),
-    # MicroAirEasyTouchSensor.BATTERY_PERCENT: SensorEntityDescription(
-    #     key=MicroAirEasyTouchSensor.BATTERY_PERCENT,
-    #     device_class=SensorDeviceClass.BATTERY,
-    #     native_unit_of_measurement=PERCENTAGE,
-    #     state_class=SensorStateClass.MEASUREMENT,
-    #     entity_category=EntityCategory.DIAGNOSTIC,
-    # ),
     # MicroAirEasyTouchSensor.TIMESTAMP: SensorEntityDescription(
     #     key=MicroAirEasyTouchSensor.TIMESTAMP,
     #     device_class=SensorDeviceClass.TIMESTAMP,
@@ -98,48 +91,62 @@ def sensor_update_to_bluetooth_data_update(
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: config_entries.ConfigEntry,
+    config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up the MicroAirEasyTouch BLE sensors."""
-    coordinator: PassiveBluetoothProcessorCoordinator = hass.data[DOMAIN][
-        entry.entry_id
+    """Set up MicroAirEasyTouch sensor entities."""
+    coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
+    # data = coordinator.data.processor if coordinator.data else None
+    data = hass.data[DOMAIN][config_entry.entry_id]["data"]
+
+    entities = [
+        MicroAirEasyTouchSensorEntity(coordinator, description, data)
+        for description in SENSOR_DESCRIPTIONS.values()
     ]
-    processor = PassiveBluetoothDataProcessor(sensor_update_to_bluetooth_data_update)
-    entry.async_on_unload(
-        processor.async_add_entities_listener(
-            MicroAirEasyTouchBluetoothSensorEntity, async_add_entities
-        )
-    )
-    entry.async_on_unload(
-        coordinator.async_register_processor(processor, SensorEntityDescription)
-    )
+    async_add_entities(entities)
 
 
-class MicroAirEasyTouchBluetoothSensorEntity(
-    PassiveBluetoothProcessorEntity[PassiveBluetoothDataProcessor[str, str | int | None]],
-    SensorEntity,
-):
+class MicroAirEasyTouchSensorEntity(CoordinatorEntity, SensorEntity):
     """Representation of a MicroAirEasyTouch sensor."""
 
-    @property
-    def native_value(self) -> str | int | None:
-        """Return the native value."""
-        return self.processor.entity_data.get(self.entity_key)
+    entity_description: SensorEntityDescription
+
+    def __init__(
+        self,
+        coordinator: DataUpdateCoordinator,
+        description: SensorEntityDescription,
+        data: MicroAirEasyTouchBluetoothDeviceData | None,
+    ) -> None:
+        """Initialize the sensor."""
+        super().__init__(coordinator)
+        self.entity_description = description
+        self._data = data
+        self._attr_unique_id = f"{coordinator.name}_{description.key}"
+        self._attr_name = description.name or description.key.replace("_", " ").title()  # Set friendly name
+        if data:
+            # Use getattr to safely access name and manufacturer, with fallbacks
+            device_name = getattr(data, "name", f"EasyTouch_{coordinator.name.split('_')[-1]}")
+            device_manufacturer = getattr(data, "manufacturer", "MicroAirEasyTouch")
+            self._attr_device_info = DeviceInfo(
+                identifiers={(DOMAIN, coordinator.name)},
+                name=device_name,
+                manufacturer=device_manufacturer,
+                model="Thermostat",
+            )
 
     @property
     def available(self) -> bool:
-        """Return True if entity is available.
+        """Return if entity is available."""
+        return self.coordinator.last_update_success and self._data is not None
 
-        The sensor is only created when the device is seen.
-
-        Since these are sleepy devices which stop broadcasting
-        when not in use, we can't rely on the last update time
-        so once we have seen the device we always return True.
-        """
-        return True
-
-    @property
-    def assumed_state(self) -> bool:
-        """Return True if the device is no longer broadcasting."""
-        return not self.processor.available
+    @callback
+    def _handle_coordinator_update(self) -> None:
+        """Handle updated data from the coordinator."""
+        if self.coordinator.last_update_success and self.coordinator.data:
+            _LOGGER.debug("Coordinator data: %s", self.coordinator.data.entity_values)
+            entity_data = self.coordinator.data.entity_values.get(self.entity_description.key)
+            if entity_data:
+                self._attr_native_value = entity_data.native_value
+            else:
+                self._attr_native_value = None
+        self.async_write_ha_state()

@@ -23,16 +23,16 @@ from .const import (
     UPDATE_INTERVAL,
 )
 
-from typing import Optional
+from typing import Optional, Any
 
 _LOGGER = logging.getLogger(__name__)
 
 
 class MicroAirEasyTouchSensor(StrEnum):
 
-    FACE_PLATE_TEMPERATURE = "face_plate_temperature"
+    FACE_PLATE_TEMPERATURE = "face_plate_temperature"   
     CURRENT_MODE_NUMBER = "current_mode_number"
-    CURRENT_MODE = "current_mode"
+    MODE = "mode"
     SIGNAL_STRENGTH = "signal_strength"
     # TIMESTAMP = "timestamp"
 
@@ -46,7 +46,6 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         self._email = email
         self._client = None
         self._event = asyncio.Event()
-        # self._notification_count = 0
         self.modes = {
             0:"off",
             1:"fan",
@@ -64,47 +63,28 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         name = f"{service_info.name} {short_address(service_info.address)}"
         self.set_device_name(name)
         self.set_title(name)
+        
+        # Update signal strength from advertisement
+        self.update_sensor(
+            key=MicroAirEasyTouchSensor.SIGNAL_STRENGTH,
+            native_unit_of_measurement="dBm",
+            native_value=service_info.rssi,
+            device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+            name="Signal Strength",
+        )
 
     def poll_needed(
         self, service_info: BluetoothServiceInfo, last_poll: float | None
     ) -> bool:
-        """
-        This is called every time we get a service_info for a device. It means the
-        device is working and online.
-        """
-        # _LOGGER.warn("Last poll: %s", last_poll)
-        # _LOGGER.warn("Update interval: %s", UPDATE_INTERVAL)
-        # self._notification_count = 0
-        return not last_poll or last_poll > UPDATE_INTERVAL
-
-    # @retry_bluetooth_connection_error()
-    def notification_handler(self, _, data) -> None:
-        """Helper for command events"""
-        try:
-            # face_plate_temperature = data[12]
-            current_mode_number = data[15]
-            # current_mode = self.modes[current_mode_number]
-
-        except NameError:
-            # Handle when variables are not defined
-            pass
-
-# Removing the notification counter and just setting the event after a single notification
-#
-#         # Increment the notification count
-#         self._notification_count += 1
-#         _LOGGER.warn("Notification count %s", self._notification_count)
-#         # Check if all expected notifications are processed
-#         if self._notification_count >= EXPECTED_NOTIFICATION_COUNT:
-#             # Reset the counter and set the event to indicate that all notifications are processed
-#             self._notification_count = 0
-#             _LOGGER.warn("Notification count %s", self._notification_count)
-#             self._event.set()
-#             _LOGGER.warn("Event %s", self._event.is_set())
-#
-        # Set the event to indicate that the notification is processed
-        self._event.set()
-        return
+        """Determine if polling is needed based on the last poll time."""
+        current_time = time.time()
+        if last_poll is None:
+            _LOGGER.debug("No previous poll, polling now")
+            return True
+        time_since_last_poll = current_time - last_poll
+        _LOGGER.debug("Time since last poll: %s seconds", time_since_last_poll)
+        # Poll if connectable or interval exceeded
+        return service_info.connectable and time_since_last_poll > UPDATE_INTERVAL
     
     # Function to parse the data from the device
     def decrypt(self, data: bytes) -> bytes:
@@ -170,12 +150,10 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         
     async def async_poll(self, ble_device: BLEDevice) -> SensorUpdate:
         """Poll the device to retrieve sensor values."""
-        # During initial setup, password is intentionally None
         if self._password is None:
             _LOGGER.debug("Device in initial setup mode - skipping authentication")
             return self._finish_update()
 
-        # Normal operation with configured password
         if not self._password:
             _LOGGER.error("Password not configured")
             return self._finish_update()
@@ -185,63 +163,57 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             BleakClientWithServiceCache, ble_device, ble_device.address
         )
 
+        if not self._client.is_connected:
+            _LOGGER.warning("Failed to connect to BLE device: %s", ble_device.address)
+            return self._finish_update()
+
         try:
-            # Authenticate to the device
+            # Authenticate with the device
             if not await self.authenticate(self._password):
                 _LOGGER.error("Failed to authenticate with device")
                 return self._finish_update()
 
             _LOGGER.debug("Connected and authenticated to BLE device: %s", ble_device.address)
 
-            # Start listening for response
+            # Send the "Get Status" command
+            message = {"Type": "Get Status", "Zone": 0, "EM": self._email, "TM": int(time.time())}
+            message_json = json.dumps(message)
+            await self._client.write_gatt_char(UUIDS["jsonCmd"], bytes(message_json.encode('utf-8')))
+
+            # Wait briefly for the device to process the command (adjust as needed)
+            await asyncio.sleep(1)  # Give the device time to respond
+
+            # Read the response from jsonReturn
             json_char = self._client.services.get_characteristic(UUIDS["jsonReturn"])
             json_payload = await self._client.read_gatt_char(json_char)
+            decrypted_status = self.decrypt(json_payload.decode('utf-8'))
 
-            # Send the Get Status command
-            message = {"Type":"Get Status","Zone":0,"EM":self._email,"TM":int(time.time())}
-            message_json = json.dumps(message)
-            await self._client.write_gatt_char(UUIDS["jsonCmd"], bytes(message_json.encode('utf_8')))
+            # Extract and update sensor data
+            face_plate_temperature = decrypted_status.get('facePlateTemperature', 0)
+            mode = decrypted_status.get('mode', 'unknown')
 
-            # Send the response to the decrypt function
-            status = self.decrypt(bytes(json_payload).decode())
-
-            # Prepare the decrypted data for sensor updates
-            face_plate_temperature = status['facePlateTemperature']
-            current_mode = status['current_mode']
-
-            # Update the sensors
             self.update_sensor(
-            key=str(MicroAirEasyTouchSensor.FACE_PLATE_TEMPERATURE),
-            native_unit_of_measurement=Units.TEMP_FAHRENHEIT,
-            native_value=face_plate_temperature,
-            device_class=SensorDeviceClass.TEMPERATURE,
-            name="Face Plate Temperature",
-            ),
-            
+                key=str(MicroAirEasyTouchSensor.FACE_PLATE_TEMPERATURE),
+                native_unit_of_measurement=Units.TEMP_FAHRENHEIT,
+                native_value=face_plate_temperature,
+                device_class=SensorDeviceClass.TEMPERATURE,
+                name="Face Plate Temperature",
+            )
             self.update_sensor(
-            key=str(MicroAirEasyTouchSensor.CURRENT_MODE),
-            native_unit_of_measurement="",  # Empty string for mode data
-            native_value=current_mode,
-            name="Current Mode",
+                key=str(MicroAirEasyTouchSensor.MODE),
+                native_unit_of_measurement="",
+                native_value=mode,
+                name="Mode",
             )
 
-            # Wait to see if a callback comes in.
-            try:
-                await asyncio.wait_for(self._event.wait(), 15)
-            except asyncio.TimeoutError:
-                _LOGGER.warn("Timeout getting command data.")
-            except:
-                _LOGGER.warn("Wait For Bleak error")
-            finally:
-                await self._client.stop_notify(UUIDS["jsonReturn"])
-                await self._client.disconnect()
-                _LOGGER.debug("Disconnected from active bluetooth client")
+            _LOGGER.debug("Successfully polled device: %s", decrypted_status)
             return self._finish_update()
 
         except Exception as e:
             _LOGGER.error("Error polling device: %s", str(e))
             raise
         finally:
-            if self._client:
+            if self._client and self._client.is_connected:
                 await self._client.disconnect()
-                self._event.clear()
+            self._event.clear()
+            _LOGGER.debug("Disconnected from BLE device")
