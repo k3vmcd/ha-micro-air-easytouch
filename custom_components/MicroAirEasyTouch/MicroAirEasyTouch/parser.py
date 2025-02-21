@@ -52,6 +52,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             2:"cool",
             3:"cool_on",
             4:"heat",
+            5:"heat_on",
             11:"auto"
             }
 
@@ -91,7 +92,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         status=json.loads(data)
         info=status['Z_sts']['0']
         param=status['PRM']
-        modes={0:"off",3:"cool_on",4:"heat",2:"cool",1:"fan",11:"auto"}
+        modes={0:"off",5:"heat_on",4:"heat",3:"cool_on",2:"cool",1:"fan",11:"auto"}
         fan_modes={0:"off",1:"manuelL",2:"manuellH",65:"cycledL",66:"cycledH",128:"full auto",}
         hr_status={}
         hr_status['SN']=status['SN']
