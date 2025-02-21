@@ -1,0 +1,5 @@
+{
+    "name": "Micro-Air EasyTouch Thermostat",
+    "render_readme": true,
+    "homeassistant": "2024.10.1"
+}
