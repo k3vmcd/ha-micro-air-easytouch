@@ -34,30 +34,35 @@ from .const import DOMAIN
 
 SENSOR_DESCRIPTIONS: dict[str, SensorEntityDescription] = {
     MicroAirEasyTouchSensor.FACE_PLATE_TEMPERATURE: SensorEntityDescription(
+        name="Faceplate Temperature",
         key=MicroAirEasyTouchSensor.FACE_PLATE_TEMPERATURE,
         native_unit_of_measurement=UnitOfTemperature.FAHRENHEIT,
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
     ),
     MicroAirEasyTouchSensor.MODE: SensorEntityDescription(
+        name="Mode",
         key=MicroAirEasyTouchSensor.MODE,
         device_class=SensorDeviceClass.ENUM,
         options=["off", "fan", "cool", "cool_on", "heat", "heat_on", "auto"],
     ),
 
     MicroAirEasyTouchSensor.CURRENT_MODE: SensorEntityDescription(
+        name="Current Mode",
         key=MicroAirEasyTouchSensor.CURRENT_MODE,
         device_class=SensorDeviceClass.ENUM,
         options=["off", "fan", "cool", "cool_on", "heat", "heat_on", "auto"],
     ),
 
     MicroAirEasyTouchSensor.FAN_MODE: SensorEntityDescription(
+        name="Fan Mode",
         key=MicroAirEasyTouchSensor.FAN_MODE,
         device_class=SensorDeviceClass.ENUM,
         options=["off", "manualL", "manualH", "cycledL", "cycledH", "full auto"],
     ),
 
     MicroAirEasyTouchSensor.AUTO_HEAT_SP: SensorEntityDescription(
+        name="Auto Heat Setpoint",
         key=MicroAirEasyTouchSensor.AUTO_HEAT_SP,
         native_unit_of_measurement=UnitOfTemperature.FAHRENHEIT,
         device_class=SensorDeviceClass.TEMPERATURE,
@@ -65,6 +70,7 @@ SENSOR_DESCRIPTIONS: dict[str, SensorEntityDescription] = {
     ),
 
     MicroAirEasyTouchSensor.AUTO_COOL_SP: SensorEntityDescription(
+        name="Auto Cool Setpoint",
         key=MicroAirEasyTouchSensor.AUTO_COOL_SP,
         native_unit_of_measurement=UnitOfTemperature.FAHRENHEIT,
         device_class=SensorDeviceClass.TEMPERATURE,
@@ -72,6 +78,7 @@ SENSOR_DESCRIPTIONS: dict[str, SensorEntityDescription] = {
     ),
 
     MicroAirEasyTouchSensor.COOL_SP: SensorEntityDescription(
+        name="Cool Setpoint",
         key=MicroAirEasyTouchSensor.COOL_SP,
         native_unit_of_measurement=UnitOfTemperature.FAHRENHEIT,
         device_class=SensorDeviceClass.TEMPERATURE,
@@ -79,6 +86,7 @@ SENSOR_DESCRIPTIONS: dict[str, SensorEntityDescription] = {
     ),
 
     MicroAirEasyTouchSensor.HEAT_SP: SensorEntityDescription(
+        name="Heat Setpoint",
         key=MicroAirEasyTouchSensor.HEAT_SP,
         native_unit_of_measurement=UnitOfTemperature.FAHRENHEIT,
         device_class=SensorDeviceClass.TEMPERATURE,
@@ -86,6 +94,7 @@ SENSOR_DESCRIPTIONS: dict[str, SensorEntityDescription] = {
     ),
 
     MicroAirEasyTouchSensor.DRY_SP: SensorEntityDescription(
+        name="Dry Setpoint",
         key=MicroAirEasyTouchSensor.DRY_SP,
         native_unit_of_measurement=UnitOfTemperature.FAHRENHEIT,
         device_class=SensorDeviceClass.TEMPERATURE,
@@ -180,12 +189,19 @@ class MicroAirEasyTouchSensorEntity(CoordinatorEntity, SensorEntity):
         super().__init__(coordinator)
         self.entity_description = description
         self._data = data
-        self._attr_unique_id = f"{coordinator.name}_{description.key}"
-        self._attr_name = description.name or description.key.replace("_", " ").title()  # Set friendly name
+        
+        # Set unique_id using just the MAC address part and sensor key
+        mac_address = coordinator.name.split('_')[-1]
+        self._attr_unique_id = f"microaireasytouch_{mac_address}_{description.key}"
+        
+        # Set a clean display name using just the sensor description name
+        _LOGGER.debug("Setting entity name for %s: %s", description.key, description.name or description.key.replace("_", " ").title())
+        self._attr_name = description.name or description.key.replace("_", " ").title()
+
         if data:
             # Use getattr to safely access name and manufacturer, with fallbacks
-            device_name = getattr(data, "name", f"EasyTouch_{coordinator.name.split('_')[-1]}")
-            device_manufacturer = getattr(data, "manufacturer", "MicroAirEasyTouch")
+            device_name = getattr(data, "name", f"EasyTouch {mac_address}")
+            device_manufacturer = getattr(data, "manufacturer", "Micro-Air")
             self._attr_device_info = DeviceInfo(
                 identifiers={(DOMAIN, coordinator.name)},
                 name=device_name,
