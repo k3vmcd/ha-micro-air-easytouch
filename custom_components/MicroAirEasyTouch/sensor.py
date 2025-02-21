@@ -54,7 +54,7 @@ SENSOR_DESCRIPTIONS: dict[str, SensorEntityDescription] = {
     MicroAirEasyTouchSensor.FAN_MODE: SensorEntityDescription(
         key=MicroAirEasyTouchSensor.FAN_MODE,
         device_class=SensorDeviceClass.ENUM,
-        options=["off", "manuelL", "manuellH", "cycledL", "cycledH", "full auto"],
+        options=["off", "manualL", "manualH", "cycledL", "cycledH", "full auto"],
     ),
 
     MicroAirEasyTouchSensor.AUTO_HEAT_SP: SensorEntityDescription(
