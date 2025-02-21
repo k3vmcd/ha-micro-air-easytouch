@@ -10,10 +10,7 @@ from .MicroAirEasyTouch import MicroAirEasyTouchSensor, SensorUpdate
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.components.bluetooth.passive_update_processor import (
-    # PassiveBluetoothDataProcessor,
     PassiveBluetoothDataUpdate,
-    # PassiveBluetoothProcessorCoordinator,
-    # PassiveBluetoothProcessorEntity,
 )
 from homeassistant.components.sensor import (
     SensorDeviceClass,
@@ -22,11 +19,6 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.const import (
-    # PERCENTAGE,
-    # SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
-    # EntityCategory,
-    # Platform,
-    # UnitOfPressure,
     UnitOfTemperature,
 )
 from homeassistant.core import HomeAssistant, callback
@@ -59,18 +51,46 @@ SENSOR_DESCRIPTIONS: dict[str, SensorEntityDescription] = {
         options=["off", "fan", "cool", "cool_on", "heat", "heat_on", "auto"],
     ),
 
-    # MicroAirEasyTouchSensor.SIGNAL_STRENGTH: SensorEntityDescription(
-    #     key=MicroAirEasyTouchSensor.SIGNAL_STRENGTH,
-    #     device_class=SensorDeviceClass.SIGNAL_STRENGTH,
-    #     native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
-    #     icon="mdi:wifi-strength",
-    # ),
+    MicroAirEasyTouchSensor.FAN_MODE: SensorEntityDescription(
+        key=MicroAirEasyTouchSensor.FAN_MODE,
+        device_class=SensorDeviceClass.ENUM,
+        options=["off", "manuelL", "manuellH", "cycledL", "cycledH", "full auto"],
+    ),
 
-    # MicroAirEasyTouchSensor.TIMESTAMP: SensorEntityDescription(
-    #     key=MicroAirEasyTouchSensor.TIMESTAMP,
-    #     device_class=SensorDeviceClass.TIMESTAMP,
-    #     icon="mdi:clock-time-four-outline",
-    # ),
+    MicroAirEasyTouchSensor.AUTO_HEAT_SP: SensorEntityDescription(
+        key=MicroAirEasyTouchSensor.AUTO_HEAT_SP,
+        native_unit_of_measurement=UnitOfTemperature.FAHRENHEIT,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+
+    MicroAirEasyTouchSensor.AUTO_COOL_SP: SensorEntityDescription(
+        key=MicroAirEasyTouchSensor.AUTO_COOL_SP,
+        native_unit_of_measurement=UnitOfTemperature.FAHRENHEIT,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+
+    MicroAirEasyTouchSensor.COOL_SP: SensorEntityDescription(
+        key=MicroAirEasyTouchSensor.COOL_SP,
+        native_unit_of_measurement=UnitOfTemperature.FAHRENHEIT,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+
+    MicroAirEasyTouchSensor.HEAT_SP: SensorEntityDescription(
+        key=MicroAirEasyTouchSensor.HEAT_SP,
+        native_unit_of_measurement=UnitOfTemperature.FAHRENHEIT,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+
+    MicroAirEasyTouchSensor.DRY_SP: SensorEntityDescription(
+        key=MicroAirEasyTouchSensor.DRY_SP,
+        native_unit_of_measurement=UnitOfTemperature.FAHRENHEIT,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
 
 }
 
@@ -127,7 +147,6 @@ async def async_setup_entry(
 ) -> None:
     """Set up MicroAirEasyTouch sensor entities."""
     coordinator = hass.data[DOMAIN][config_entry.entry_id]["coordinator"]
-    # data = coordinator.data.processor if coordinator.data else None
     data = hass.data[DOMAIN][config_entry.entry_id]["data"]
 
     entities = [
@@ -178,18 +197,6 @@ class MicroAirEasyTouchSensorEntity(CoordinatorEntity, SensorEntity):
         elif self.entity_description.key == MicroAirEasyTouchSensor.CURRENT_MODE:
             return CURRENT_MODE_ICONS.get(self._attr_native_value, "mdi:thermostat-box")
         return None  # Let other sensors use their default icons
-
-    # @callback
-    # def _handle_coordinator_update(self) -> None:
-    #     """Handle updated data from the coordinator."""
-    #     if self.coordinator.last_update_success and self.coordinator.data:
-    #         _LOGGER.debug("Coordinator data: %s", self.coordinator.data.entity_values)
-    #         entity_data = self.coordinator.data.entity_values.get(self.entity_description.key)
-    #         if entity_data:
-    #             self._attr_native_value = entity_data.native_value
-    #         else:
-    #             self._attr_native_value = None
-    #     self.async_write_ha_state()
 
     @callback
     def _handle_coordinator_update(self) -> None:

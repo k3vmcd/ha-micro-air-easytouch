@@ -4,7 +4,6 @@ import logging
 import asyncio
 import time
 import json
-from datetime import datetime, timezone
 
 from bleak import BLEDevice
 from bleak_retry_connector import (
@@ -33,8 +32,12 @@ class MicroAirEasyTouchSensor(StrEnum):
     FACE_PLATE_TEMPERATURE = "face_plate_temperature"   
     CURRENT_MODE = "current_mode"
     MODE = "mode"
-    # SIGNAL_STRENGTH = "signal_strength"
-    # TIMESTAMP = "timestamp"
+    FAN_MODE = "fan_mode"
+    AUTO_HEAT_SP = "autoHeat_sp"
+    AUTO_COOL_SP = "autoCool_sp"
+    COOL_SP = "cool_sp"
+    HEAT_SP = "heat_sp"
+    DRY_SP = "dry_sp"
 
 class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
     """Data for MicroAirEasyTouch sensors."""
@@ -46,15 +49,6 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         self._email = email
         self._client = None
         self._event = asyncio.Event()
-        self.modes = {
-            0:"off",
-            1:"fan",
-            2:"cool",
-            3:"cool_on",
-            4:"heat",
-            5:"heat_on",
-            11:"auto"
-            }
 
     def _start_update(self, service_info: BluetoothServiceInfo) -> None:
         """Update from BLE advertisement data."""
@@ -64,15 +58,6 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         name = f"{service_info.name} {short_address(service_info.address)}"
         self.set_device_name(name)
         self.set_title(name)
-        
-        # # Update signal strength from advertisement
-        # self.update_sensor(
-        #     key=MicroAirEasyTouchSensor.SIGNAL_STRENGTH,
-        #     native_unit_of_measurement="dBm",
-        #     native_value=service_info.rssi,
-        #     device_class=SensorDeviceClass.SIGNAL_STRENGTH,
-        #     name="Signal Strength",
-        # )
 
     def poll_needed(
         self, service_info: BluetoothServiceInfo, last_poll: float | None
@@ -93,7 +78,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         info=status['Z_sts']['0']
         param=status['PRM']
         modes={0:"off",5:"heat_on",4:"heat",3:"cool_on",2:"cool",1:"fan",11:"auto"}
-        fan_modes={0:"off",1:"manuelL",2:"manuellH",65:"cycledL",66:"cycledH",128:"full auto",}
+        fan_modes={0:"off",1:"manualL",2:"manualH",65:"cycledL",66:"cycledH",128:"full auto",}
         hr_status={}
         hr_status['SN']=status['SN']
         hr_status['autoHeat_sp']=info[0]
@@ -189,10 +174,10 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             json_payload = await self._client.read_gatt_char(json_char)
             decrypted_status = self.decrypt(json_payload.decode('utf-8'))
 
-            # Extract and update sensor data
-            face_plate_temperature = decrypted_status.get('facePlateTemperature', 0)
-            mode = decrypted_status.get('mode', 'unknown')
+            # SENSOR UPDATES
 
+            # Update the face plate temperature
+            face_plate_temperature = decrypted_status.get('facePlateTemperature', 0)
             self.update_sensor(
                 key=str(MicroAirEasyTouchSensor.FACE_PLATE_TEMPERATURE),
                 native_unit_of_measurement=Units.TEMP_FAHRENHEIT,
@@ -200,6 +185,9 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
                 device_class=SensorDeviceClass.TEMPERATURE,
                 name="Face Plate Temperature",
             )
+
+            # Update the mode
+            mode = decrypted_status.get('mode', 'unknown')
             self.update_sensor(
                 key=str(MicroAirEasyTouchSensor.MODE),
                 native_unit_of_measurement="",
@@ -214,6 +202,60 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
                 native_unit_of_measurement="",
                 native_value=current_mode,
                 name="Current Mode",
+            )
+
+            # Update the fan mode
+            fan_mode = decrypted_status.get('fan_mode', 'unknown')
+            self.update_sensor(
+                key=str(MicroAirEasyTouchSensor.FAN_MODE),
+                native_unit_of_measurement="",
+                native_value=fan_mode,
+                name="Fan Mode",
+            )
+
+            # Update the Auto Heat Setpoint
+            auto_heat_sp = decrypted_status.get('autoHeat_sp', 0)
+            self.update_sensor(
+                key=str(MicroAirEasyTouchSensor.AUTO_HEAT_SP),
+                native_unit_of_measurement=Units.TEMP_FAHRENHEIT,
+                native_value=auto_heat_sp,
+                name="Auto Heat Setpoint",
+            )
+
+            # Update the Auto Cool Setpoint
+            auto_cool_sp = decrypted_status.get('autoCool_sp', 0)
+            self.update_sensor(
+                key=str(MicroAirEasyTouchSensor.AUTO_COOL_SP),
+                native_unit_of_measurement=Units.TEMP_FAHRENHEIT,
+                native_value=auto_cool_sp,
+                name="Auto Cool Setpoint",
+            )
+
+            # Update the Cool Setpoint
+            cool_sp = decrypted_status.get('cool_sp', 0)
+            self.update_sensor(
+                key=str(MicroAirEasyTouchSensor.COOL_SP),
+                native_unit_of_measurement=Units.TEMP_FAHRENHEIT,
+                native_value=cool_sp,
+                name="Cool Setpoint",
+            )
+
+            # Update the Heat Setpoint
+            heat_sp = decrypted_status.get('heat_sp', 0)
+            self.update_sensor(
+                key=str(MicroAirEasyTouchSensor.HEAT_SP),
+                native_unit_of_measurement=Units.TEMP_FAHRENHEIT,
+                native_value=heat_sp,
+                name="Heat Setpoint",
+            )
+
+            # Update the Dry Setpoint
+            dry_sp = decrypted_status.get('dry_sp', 0)
+            self.update_sensor(
+                key=str(MicroAirEasyTouchSensor.DRY_SP),
+                native_unit_of_measurement=Units.TEMP_FAHRENHEIT,
+                native_value=dry_sp,
+                name="Dry Setpoint",
             )
 
             _LOGGER.debug("Successfully polled device: %s", decrypted_status)
