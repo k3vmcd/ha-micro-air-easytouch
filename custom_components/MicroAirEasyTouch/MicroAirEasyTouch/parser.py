@@ -31,9 +31,9 @@ _LOGGER = logging.getLogger(__name__)
 class MicroAirEasyTouchSensor(StrEnum):
 
     FACE_PLATE_TEMPERATURE = "face_plate_temperature"   
-    CURRENT_MODE_NUMBER = "current_mode_number"
+    CURRENT_MODE = "current_mode"
     MODE = "mode"
-    SIGNAL_STRENGTH = "signal_strength"
+    # SIGNAL_STRENGTH = "signal_strength"
     # TIMESTAMP = "timestamp"
 
 class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
@@ -65,14 +65,14 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         self.set_device_name(name)
         self.set_title(name)
         
-        # Update signal strength from advertisement
-        self.update_sensor(
-            key=MicroAirEasyTouchSensor.SIGNAL_STRENGTH,
-            native_unit_of_measurement="dBm",
-            native_value=service_info.rssi,
-            device_class=SensorDeviceClass.SIGNAL_STRENGTH,
-            name="Signal Strength",
-        )
+        # # Update signal strength from advertisement
+        # self.update_sensor(
+        #     key=MicroAirEasyTouchSensor.SIGNAL_STRENGTH,
+        #     native_unit_of_measurement="dBm",
+        #     native_value=service_info.rssi,
+        #     device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+        #     name="Signal Strength",
+        # )
 
     def poll_needed(
         self, service_info: BluetoothServiceInfo, last_poll: float | None
@@ -205,6 +205,15 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
                 native_unit_of_measurement="",
                 native_value=mode,
                 name="Mode",
+            )
+
+            # Update the current mode
+            current_mode = decrypted_status.get('current_mode', 'unknown')
+            self.update_sensor(
+                key=str(MicroAirEasyTouchSensor.CURRENT_MODE),
+                native_unit_of_measurement="",
+                native_value=current_mode,
+                name="Current Mode",
             )
 
             _LOGGER.debug("Successfully polled device: %s", decrypted_status)

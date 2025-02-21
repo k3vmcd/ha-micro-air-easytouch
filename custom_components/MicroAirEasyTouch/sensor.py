@@ -23,7 +23,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import (
     # PERCENTAGE,
-    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    # SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     # EntityCategory,
     # Platform,
     # UnitOfPressure,
@@ -46,14 +46,26 @@ SENSOR_DESCRIPTIONS: dict[str, SensorEntityDescription] = {
         native_unit_of_measurement=UnitOfTemperature.FAHRENHEIT,
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
-        icon="mdi:thermometer-lines",
     ),
     MicroAirEasyTouchSensor.MODE: SensorEntityDescription(
         key=MicroAirEasyTouchSensor.MODE,
         device_class=SensorDeviceClass.ENUM,
         options=["off", "fan", "cool", "cool_on", "heat", "heat_on", "auto"],
-        icon="mdi:hvac",
     ),
+
+    MicroAirEasyTouchSensor.CURRENT_MODE: SensorEntityDescription(
+        key=MicroAirEasyTouchSensor.CURRENT_MODE,
+        device_class=SensorDeviceClass.ENUM,
+        options=["off", "fan", "cool", "cool_on", "heat", "heat_on", "auto"],
+    ),
+
+    # MicroAirEasyTouchSensor.SIGNAL_STRENGTH: SensorEntityDescription(
+    #     key=MicroAirEasyTouchSensor.SIGNAL_STRENGTH,
+    #     device_class=SensorDeviceClass.SIGNAL_STRENGTH,
+    #     native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    #     icon="mdi:wifi-strength",
+    # ),
+
     # MicroAirEasyTouchSensor.TIMESTAMP: SensorEntityDescription(
     #     key=MicroAirEasyTouchSensor.TIMESTAMP,
     #     device_class=SensorDeviceClass.TIMESTAMP,
@@ -62,6 +74,25 @@ SENSOR_DESCRIPTIONS: dict[str, SensorEntityDescription] = {
 
 }
 
+MODE_ICONS = {
+    "off": "mdi:power",
+    "fan": "mdi:fan",
+    "cool": "mdi:snowflake",
+    "cool_on": "mdi:snowflake",
+    "heat": "mdi:fire",
+    "heat_on": "mdi:fire",
+    "auto": "mdi:sun-snowflake"
+}
+
+CURRENT_MODE_ICONS = {
+    "off": "mdi:power",
+    "fan": "mdi:fan",
+    "cool": "mdi:snowflake-thermometer",
+    "cool_on": "mdi:snowflake-thermometer",
+    "heat": "mdi:fire-circle",
+    "heat_on": "mdi:fire-circle",
+    "auto": "mdi:autorenew"
+}
 
 def sensor_update_to_bluetooth_data_update(
     sensor_update: SensorUpdate,
@@ -138,6 +169,15 @@ class MicroAirEasyTouchSensorEntity(CoordinatorEntity, SensorEntity):
     def available(self) -> bool:
         """Return if entity is available."""
         return self.coordinator.last_update_success and self._data is not None
+    
+    @property
+    def icon(self) -> str:
+        """Return the icon."""
+        if self.entity_description.key == MicroAirEasyTouchSensor.MODE:
+            return MODE_ICONS.get(self._attr_native_value, "mdi:thermostat")
+        elif self.entity_description.key == MicroAirEasyTouchSensor.CURRENT_MODE:
+            return CURRENT_MODE_ICONS.get(self._attr_native_value, "mdi:thermostat-box")
+        return None  # Let other sensors use their default icons
 
     # @callback
     # def _handle_coordinator_update(self) -> None:
