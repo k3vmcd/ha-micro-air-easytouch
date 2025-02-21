@@ -14,7 +14,7 @@ from homeassistant.config_entries import ConfigFlow
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.const import CONF_ADDRESS, CONF_PASSWORD, CONF_USERNAME
 
-from .MicroAirEasyTouch import MicroAirEasyTouchBluetoothDeviceData
+from .micro_air_easytouch import MicroAirEasyTouchBluetoothDeviceData
 from .const import DOMAIN
 
 

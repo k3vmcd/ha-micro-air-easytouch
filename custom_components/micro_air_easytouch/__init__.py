@@ -21,8 +21,8 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, callback
 
-from .MicroAirEasyTouch import MicroAirEasyTouchBluetoothDeviceData, SensorUpdate
-from .MicroAirEasyTouch.const import UPDATE_INTERVAL
+from .micro_air_easytouch import MicroAirEasyTouchBluetoothDeviceData, SensorUpdate
+from .micro_air_easytouch.const import UPDATE_INTERVAL
 from .const import DOMAIN
 from .sensor import sensor_update_to_bluetooth_data_update
 

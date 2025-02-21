@@ -6,7 +6,7 @@ import logging
 _LOGGER = logging.getLogger(__name__)
 
 
-from .MicroAirEasyTouch import MicroAirEasyTouchSensor, SensorUpdate
+from .micro_air_easytouch import MicroAirEasyTouchSensor, SensorUpdate
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.components.bluetooth.passive_update_processor import (

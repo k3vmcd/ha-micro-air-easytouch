@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .MicroAirEasyTouch import DeviceKey
+from .micro_air_easytouch import DeviceKey
 
 from homeassistant.components.bluetooth.passive_update_processor import (
     PassiveBluetoothEntityKey,
