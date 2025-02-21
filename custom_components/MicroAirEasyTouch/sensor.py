@@ -139,14 +139,33 @@ class MicroAirEasyTouchSensorEntity(CoordinatorEntity, SensorEntity):
         """Return if entity is available."""
         return self.coordinator.last_update_success and self._data is not None
 
+    # @callback
+    # def _handle_coordinator_update(self) -> None:
+    #     """Handle updated data from the coordinator."""
+    #     if self.coordinator.last_update_success and self.coordinator.data:
+    #         _LOGGER.debug("Coordinator data: %s", self.coordinator.data.entity_values)
+    #         entity_data = self.coordinator.data.entity_values.get(self.entity_description.key)
+    #         if entity_data:
+    #             self._attr_native_value = entity_data.native_value
+    #         else:
+    #             self._attr_native_value = None
+    #     self.async_write_ha_state()
+
     @callback
     def _handle_coordinator_update(self) -> None:
         """Handle updated data from the coordinator."""
-        if self.coordinator.last_update_success and self.coordinator.data:
-            _LOGGER.debug("Coordinator data: %s", self.coordinator.data.entity_values)
-            entity_data = self.coordinator.data.entity_values.get(self.entity_description.key)
-            if entity_data:
-                self._attr_native_value = entity_data.native_value
-            else:
-                self._attr_native_value = None
+        if not self.coordinator.data:
+            self._attr_native_value = None
+            self.async_write_ha_state()
+            return
+
+        # Get the sensor key matching our entity
+        sensor_key = self.entity_description.key
+        
+        # Find matching sensor data in coordinator update
+        for device_key, value in self.coordinator.data.entity_data.items():
+            if device_key.key == sensor_key:
+                self._attr_native_value = value
+                break
+        
         self.async_write_ha_state()

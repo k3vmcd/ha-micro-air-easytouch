@@ -24,6 +24,7 @@ from homeassistant.core import HomeAssistant, callback
 from .MicroAirEasyTouch import MicroAirEasyTouchBluetoothDeviceData, SensorUpdate
 from .MicroAirEasyTouch.const import UPDATE_INTERVAL
 from .const import DOMAIN
+from .sensor import sensor_update_to_bluetooth_data_update
 
 PLATFORMS: Final = [Platform.SENSOR]
 # PLATFORMS: list[Platform] = [Platform.SENSOR]
@@ -48,7 +49,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return None
         try:
             update = await data.async_poll(ble_device)
-            return update
+            return sensor_update_to_bluetooth_data_update(update)
         except Exception as e:
             _LOGGER.error("Failed to poll device: %s", e)
             raise
