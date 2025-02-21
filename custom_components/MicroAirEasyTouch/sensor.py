@@ -114,6 +114,15 @@ CURRENT_MODE_ICONS = {
     "auto": "mdi:autorenew"
 }
 
+FAN_MODE_ICONS = {
+    "off": "mdi:fan-off",
+    "manualL": "mdi:fan-chevron-down",
+    "manualH": "mdi:fan-chevron-up",
+    "cycledL": "mdi:fan-minus",
+    "cycledH": "mdi:fan-plus",
+    "full auto": "mdi:fan-auto"
+}
+
 def sensor_update_to_bluetooth_data_update(
     sensor_update: SensorUpdate,
 ) -> PassiveBluetoothDataUpdate:
@@ -196,6 +205,8 @@ class MicroAirEasyTouchSensorEntity(CoordinatorEntity, SensorEntity):
             return MODE_ICONS.get(self._attr_native_value, "mdi:thermostat")
         elif self.entity_description.key == MicroAirEasyTouchSensor.CURRENT_MODE:
             return CURRENT_MODE_ICONS.get(self._attr_native_value, "mdi:thermostat-box")
+        elif self.entity_description.key == MicroAirEasyTouchSensor.FAN_MODE:
+            return FAN_MODE_ICONS.get(self._attr_native_value, "mdi:fan")
         return None  # Let other sensors use their default icons
 
     @callback
