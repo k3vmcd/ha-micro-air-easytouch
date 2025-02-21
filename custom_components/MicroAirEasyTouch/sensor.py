@@ -23,7 +23,7 @@ from homeassistant.components.sensor import (
 )
 from homeassistant.const import (
     # PERCENTAGE,
-    # SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
+    SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
     # EntityCategory,
     # Platform,
     # UnitOfPressure,
@@ -51,7 +51,7 @@ SENSOR_DESCRIPTIONS: dict[str, SensorEntityDescription] = {
     MicroAirEasyTouchSensor.MODE: SensorEntityDescription(
         key=MicroAirEasyTouchSensor.MODE,
         device_class=SensorDeviceClass.ENUM,
-        options=["off", "fan", "cool", "cool_on", "heat", "auto"],
+        options=["off", "fan", "cool", "cool_on", "heat", "heat_on", "auto"],
         icon="mdi:hvac",
     ),
     # MicroAirEasyTouchSensor.TIMESTAMP: SensorEntityDescription(
