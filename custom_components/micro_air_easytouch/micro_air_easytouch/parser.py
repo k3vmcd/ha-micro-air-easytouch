@@ -26,6 +26,57 @@ from typing import Optional, Any
 
 _LOGGER = logging.getLogger(__name__)
 
+# Custom retry decorator for authentication attempts
+from functools import wraps
+def retry_authentication(retries=3, delay=1):
+    """Custom retry decorator for authentication attempts."""
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            last_exception = None
+            for attempt in range(retries):
+                try:
+                    result = await func(*args, **kwargs)
+                    if result:
+                        _LOGGER.debug("Authentication successful on attempt %d/%d", 
+                                    attempt + 1, retries)
+                        return True
+                    
+                    _LOGGER.debug("Authentication returned False on attempt %d/%d", 
+                                attempt + 1, retries)
+                    if attempt < retries - 1:
+                        _LOGGER.debug("Waiting %d second(s) before retry", delay)
+                        await asyncio.sleep(delay)
+                        continue
+                    
+                except Exception as e:
+                    last_exception = e
+                    _LOGGER.debug(
+                        "Authentication attempt %d/%d failed with error: %s", 
+                        attempt + 1, 
+                        retries, 
+                        str(e)
+                    )
+                    if attempt < retries - 1:
+                        _LOGGER.debug("Waiting %d second(s) before retry", delay)
+                        await asyncio.sleep(delay)
+                        continue
+            
+            # Final failure logging
+            if last_exception:
+                _LOGGER.error(
+                    "Authentication failed after %d attempts. Last error: %s", 
+                    retries, 
+                    str(last_exception)
+                )
+            else:
+                _LOGGER.error(
+                    "Authentication failed after %d attempts with no exception", 
+                    retries
+                )
+            return False
+        return wrapper
+    return decorator
 
 class MicroAirEasyTouchSensor(StrEnum):
 
@@ -115,9 +166,24 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             hr_status['heat_mode']=fan_modes[hr_status['heat_mode_num']]
         return hr_status
     
+    @retry_authentication(retries=3, delay=1)
     async def authenticate(self, password: str) -> bool:
         """Authenticate with the device using password."""
         try:
+            # Ensure services have been discovered
+            _LOGGER.debug("Starting service discovery...")
+            services = self._client.services
+            if not services:
+                # If services haven't been discovered yet, trigger discovery
+                await self._client.discover_services()
+                services = self._client.services
+
+            # Log discovered services and characteristics
+            for service in self._client.services:
+                _LOGGER.debug("Service found: %s", service.uuid)
+                for char in service.characteristics:
+                    _LOGGER.debug("  Characteristic: %s", char.uuid)
+
             # Convert password to bytes and send authentication
             password_bytes = password.encode('utf-8')
             
@@ -131,9 +197,9 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             return True
             
         except Exception as e:
-            _LOGGER.error("Authentication failed: %s", str(e))
+            _LOGGER.error("Authentication failed: %s", str(e), exc_info=True)
             return False
-        
+
     async def async_poll(self, ble_device: BLEDevice) -> SensorUpdate:
         """Poll the device to retrieve sensor values."""
         if self._password is None:
