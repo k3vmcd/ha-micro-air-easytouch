@@ -3,11 +3,15 @@ Copyright (c) 2025 Kevin McDonald
 
 This work is derived from:
 
-1. medisanabp_ble (https://github.com/bkbilly/medisanabp_ble)
+1. easytouch (https://github.com/mbhewitt/easytouch)
+   Copyright (c) 2024 Mew Hewitt
+   MIT License - see https://github.com/mbhewitt/easytouch/blob/main/LICENSE
+
+2. medisanabp_ble (https://github.com/bkbilly/medisanabp_ble)
    Copyright (c) 2021 bkbilly
    MIT License - see https://github.com/bkbilly/medisanabp_ble/blob/master/LICENSE
 
-2. tirelinc (https://github.com/k3vmcd/tirelinc)
+3. tirelinc (https://github.com/k3vmcd/tirelinc)
    Copyright (c) 2023 Kevin McDonald
    MIT License - see https://github.com/k3vmcd/tirelinc/blob/master/LICENSE
 

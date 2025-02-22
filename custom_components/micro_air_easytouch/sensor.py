@@ -44,21 +44,21 @@ SENSOR_DESCRIPTIONS: dict[str, SensorEntityDescription] = {
         name="Mode",
         key=MicroAirEasyTouchSensor.MODE,
         device_class=SensorDeviceClass.ENUM,
-        options=["off", "fan", "cool", "cool_on", "heat", "heat_on", "auto"],
+        options=["off", "fan", "cool", "cool_on", "heat", "heat_on", "auto", "unknown"],
     ),
 
     MicroAirEasyTouchSensor.CURRENT_MODE: SensorEntityDescription(
         name="Current Mode",
         key=MicroAirEasyTouchSensor.CURRENT_MODE,
         device_class=SensorDeviceClass.ENUM,
-        options=["off", "fan", "cool", "cool_on", "heat", "heat_on", "auto"],
+        options=["off", "fan", "cool", "cool_on", "heat", "heat_on", "auto", "unknown"],
     ),
 
     MicroAirEasyTouchSensor.FAN_MODE: SensorEntityDescription(
         name="Fan Mode",
         key=MicroAirEasyTouchSensor.FAN_MODE,
         device_class=SensorDeviceClass.ENUM,
-        options=["off", "manualL", "manualH", "cycledL", "cycledH", "full auto"],
+        options=["off", "manualL", "manualH", "cycledL", "cycledH", "full auto", "unknown"],
     ),
 
     MicroAirEasyTouchSensor.AUTO_HEAT_SP: SensorEntityDescription(
