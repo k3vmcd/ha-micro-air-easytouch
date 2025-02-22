@@ -10,7 +10,7 @@
     "codeowners": ["@k3vmcd"],
     "config_flow": true,
     "dependencies": ["bluetooth_adapters"],
-    "documentation": ["https://github.com/k3vmcd/ha-micro-air-easytouch"],
+    "documentation": ["https://github.com/k3vmcd/ha-micro-air-easytouch/blob/main/README.md"],
     "integration_type": "device",
     "iot_class": "local_polling",
     "issue_tracker": "https://github.com/k3vmcd/ha-micro-air-easytouch/issues",
