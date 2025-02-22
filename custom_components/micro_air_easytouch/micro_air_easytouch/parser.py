@@ -118,6 +118,16 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
     async def authenticate(self, password: str) -> bool:
         """Authenticate with the device using password."""
         try:
+            _LOGGER.debug("Starting service discovery...")
+            # Ensure services are discovered
+            await self._client.get_services()
+
+            # Log discovered services and characteristics
+            for service in self._client.services:
+                _LOGGER.debug("Service found: %s", service.uuid)
+                for char in service.characteristics:
+                    _LOGGER.debug("  Characteristic: %s", char.uuid)
+
             # Convert password to bytes and send authentication
             password_bytes = password.encode('utf-8')
             
@@ -131,7 +141,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             return True
             
         except Exception as e:
-            _LOGGER.error("Authentication failed: %s", str(e))
+            _LOGGER.error("Authentication failed: %s", str(e), exc_info=True)
             return False
         
     async def async_poll(self, ble_device: BLEDevice) -> SensorUpdate:

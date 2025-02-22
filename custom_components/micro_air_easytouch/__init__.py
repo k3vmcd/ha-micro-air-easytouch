@@ -43,15 +43,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 # DataUpdateCoordinator for periodic polling
     async def _async_update_data():
         """Fetch data from the device."""
+        _LOGGER.debug("Starting coordinator update for %s", address)
         ble_device = async_ble_device_from_address(hass, address)
         if not ble_device:
-            _LOGGER.debug("No BLE device found for address %s, skipping poll", address)
+            _LOGGER.warning("No BLE device found for address %s - device may be out of range", address)
             return None
         try:
+            _LOGGER.debug("Found BLE device, initiating poll")
             update = await data.async_poll(ble_device)
+            _LOGGER.debug("Poll completed successfully: %s", update)
             return sensor_update_to_bluetooth_data_update(update)
         except Exception as e:
-            _LOGGER.error("Failed to poll device: %s", e)
+            _LOGGER.error("Failed to poll device %s: %s", address, str(e), exc_info=True)
             raise
 
     coordinator = DataUpdateCoordinator(
@@ -73,6 +76,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     def _handle_bluetooth_update(service_info: BluetoothServiceInfoBleak) -> SensorUpdate:
         """Update device info from advertisements and trigger a refresh."""
         if service_info.address == address:
+            _LOGGER.debug("Received BLE advertisement from %s: %s", address, service_info)
             data._start_update(service_info)  # Set device name dynamically
             coordinator.async_set_updated_data(None)  # Trigger initial poll if needed
 
