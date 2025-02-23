@@ -170,13 +170,28 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
     async def authenticate(self, password: str) -> bool:
         """Authenticate with the device using password."""
         try:
+            # Ensure client exists and is connected and wait if not
+            if not self._client or not self._client.is_connected:
+                _LOGGER.warning("Client not connected - attempting to wait for connection to be made")
+                await asyncio.sleep(1)
+                if not self._client or not self._client.is_connected:
+                    _LOGGER.error("Client not connected")
+                    return False
+
             # Ensure services have been discovered
             _LOGGER.debug("Starting service discovery...")
             services = self._client.services
             if not services:
-                # If services haven't been discovered yet, trigger discovery
-                await self._client.discover_services()
+                # If services haven't been discovered yet, wait, check again, then trigger discovery if still not found
+                await asyncio.sleep(1)
                 services = self._client.services
+                if not services:
+                    await self._client.discover_services()
+                    services = self._client.services
+                    await asyncio.sleep(0.5)  # Small delay after discovery
+                if not services:
+                    _LOGGER.error("Services not found")
+                    return False
 
             # Log discovered services and characteristics
             for service in self._client.services:
@@ -214,6 +229,10 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         self._client = await establish_connection(
             BleakClientWithServiceCache, ble_device, ble_device.address
         )
+
+        _LOGGER.debug("Connection established, client connected: %s", self._client.is_connected)
+        _LOGGER.debug("Device address: %s", ble_device.address)
+        _LOGGER.debug("Device details: %s", ble_device.details)
 
         if not self._client.is_connected:
             _LOGGER.warning("Failed to connect to BLE device: %s", ble_device.address)
