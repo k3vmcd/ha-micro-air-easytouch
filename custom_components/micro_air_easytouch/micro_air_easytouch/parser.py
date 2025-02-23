@@ -6,6 +6,7 @@ import time
 import json
 
 from bleak import BLEDevice
+from bleak.exc import BleakError, BleakDBusError
 from bleak_retry_connector import (
     BleakClientWithServiceCache,
     establish_connection,
@@ -166,6 +167,16 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             hr_status['heat_mode']=fan_modes[hr_status['heat_mode_num']]
         return hr_status
     
+    @retry_bluetooth_connection_error(attempts=5)
+    async def _connect_to_device(self, ble_device: BLEDevice):
+        """Connect to the device with retries"""
+        return await establish_connection(
+            BleakClientWithServiceCache, 
+            ble_device, 
+            ble_device.address,
+            timeout=20.0
+        )
+    
     @retry_authentication(retries=3, delay=1)
     async def authenticate(self, password: str) -> bool:
         """Authenticate with the device using password."""
@@ -224,21 +235,19 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         if not self._password:
             _LOGGER.error("Password not configured")
             return self._finish_update()
-
-        _LOGGER.debug("Connecting to BLE device: %s", ble_device.address)
-        self._client = await establish_connection(
-            BleakClientWithServiceCache, ble_device, ble_device.address
-        )
-
-        _LOGGER.debug("Connection established, client connected: %s", self._client.is_connected)
-        _LOGGER.debug("Device address: %s", ble_device.address)
-        _LOGGER.debug("Device details: %s", ble_device.details)
-
-        if not self._client.is_connected:
-            _LOGGER.warning("Failed to connect to BLE device: %s", ble_device.address)
-            return self._finish_update()
-
+        
         try:
+            _LOGGER.debug("Connecting to BLE device: %s", ble_device.address)
+            self._client = await self._connect_to_device(ble_device)
+
+            if not self._client or not self._client.is_connected:
+                _LOGGER.warning("Failed to connect to BLE device: %s", ble_device.address)
+                return self._finish_update()
+            
+            _LOGGER.debug("Connection established, client connected: %s", self._client.is_connected)
+            _LOGGER.debug("Device address: %s", ble_device.address)
+            _LOGGER.debug("Device details: %s", ble_device.details)
+
             # Authenticate with the device
             if not await self.authenticate(self._password):
                 _LOGGER.error("Failed to authenticate with device")
@@ -346,11 +355,21 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             _LOGGER.debug("Successfully polled device: %s", decrypted_status)
             return self._finish_update()
 
+        except BleakDBusError as e:
+            _LOGGER.error("D-Bus error connecting to device: %s", str(e))
+            return self._finish_update()
+        except BleakError as e:
+            _LOGGER.error("Bluetooth error connecting to device: %s", str(e))
+            return self._finish_update()
         except Exception as e:
             _LOGGER.error("Error polling device: %s", str(e))
             raise
         finally:
-            if self._client and self._client.is_connected:
-                await self._client.disconnect()
+            try:
+                if self._client and self._client.is_connected:
+                    await self._client.disconnect()
+            except Exception as e:
+                _LOGGER.debug("Error disconnecting: %s", str(e))
+            self._client = None
             self._event.clear()
             _LOGGER.debug("Disconnected from BLE device")
