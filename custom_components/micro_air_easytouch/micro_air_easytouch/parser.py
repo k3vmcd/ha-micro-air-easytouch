@@ -6,7 +6,7 @@ import time
 import json
 
 from bleak import BLEDevice
-from bleak.exc import BleakError, BleakDBusError
+from bleak.exc import BleakError, BleakDBusError, BleakDeviceNotFoundError
 from bleak_retry_connector import (
     BleakClientWithServiceCache,
     establish_connection,
@@ -167,63 +167,90 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             hr_status['heat_mode']=fan_modes[hr_status['heat_mode_num']]
         return hr_status
     
-    @retry_bluetooth_connection_error(attempts=5)
+    @retry_bluetooth_connection_error(attempts=7)
     async def _connect_to_device(self, ble_device: BLEDevice):
         """Connect to the device with retries"""
-        return await establish_connection(
-            BleakClientWithServiceCache, 
-            ble_device, 
-            ble_device.address,
-            timeout=20.0
-        )
-    
-    @retry_authentication(retries=3, delay=1)
-    async def authenticate(self, password: str) -> bool:
-        """Authenticate with the device using password."""
         try:
-            # Ensure client exists and is connected and wait if not
-            if not self._client or not self._client.is_connected:
-                _LOGGER.warning("Client not connected - attempting to wait for connection to be made")
-                await asyncio.sleep(1)
-                if not self._client or not self._client.is_connected:
-                    _LOGGER.error("Client not connected")
-                    return False
+            self._client = await establish_connection(
+                BleakClientWithServiceCache, 
+                ble_device, 
+                ble_device.address,
+                timeout=20.0
+            )
 
-            # Ensure services have been discovered
-            _LOGGER.debug("Starting service discovery...")
-            services = self._client.services
-            if not services:
-                # If services haven't been discovered yet, wait, check again, then trigger discovery if still not found
-                await asyncio.sleep(1)
-                services = self._client.services
-                if not services:
-                    await self._client.discover_services()
-                    services = self._client.services
-                    await asyncio.sleep(0.5)  # Small delay after discovery
-                if not services:
-                    _LOGGER.error("Services not found")
-                    return False
+            # Services should be automatically cached by BleakClientWithServiceCache
+            _LOGGER.debug("Checking for cached services...")
+            
+            # Give a moment for services to be available
+            if not self._client.services:
+                _LOGGER.debug("Waiting for services to be available...")
+                await asyncio.sleep(2)
 
-            # Log discovered services and characteristics
+            # Verify services are available
+            if not self._client.services:
+                _LOGGER.error("No services available after connecting")
+                return False
+
+            # Log discovered services and characteristics for debugging
             for service in self._client.services:
                 _LOGGER.debug("Service found: %s", service.uuid)
                 for char in service.characteristics:
                     _LOGGER.debug("  Characteristic: %s", char.uuid)
 
-            # Convert password to bytes and send authentication
+            return self._client
+
+        except Exception as e:
+            _LOGGER.error("Connection error: %s", str(e))
+            raise
+    
+    @retry_authentication(retries=3, delay=2)
+    async def authenticate(self, password: str) -> bool:
+        """Authenticate with the device using password."""
+        try:
+            # Ensure client exists and is connected and wait if not
+            if not self._client or not self._client.is_connected:
+                _LOGGER.warning("Client not connected during authentication - attempting to wait for connection to be made")
+                await asyncio.sleep(1)
+                if not self._client or not self._client.is_connected:
+                    _LOGGER.error("Client not connected when attempting authentication. Reconnecting now...")
+                    await self._connect_to_device(self._ble_device)
+                    await asyncio.sleep(0.5)
+                if not self._client or not self._client.is_connected:
+                    _LOGGER.error("Client not connected after reconnecting. Authentication failed.")
+                    return False
+            
+            # Ensure services are discovered
+            if not self._client.services:
+                _LOGGER.debug("Services were not discovered when attempting authentication. Discovering services...")
+                await self._client.discover_services()
+                await asyncio.sleep(1)  # Give device time to process
+                if not self._client.services:
+                    _LOGGER.error("Services not discovered after waiting. Authentication step failed.")
+                    return False
+
+            # Convert password to bytes and send authentication with retry
             password_bytes = password.encode('utf-8')
-            
-            await self._client.write_gatt_char(
-                UUIDS["strangeCmd"],
-                password_bytes,
-                response=True
-            )
-            
+            try:
+                await self._client.write_gatt_char(
+                    UUIDS["strangeCmd"],
+                    password_bytes,
+                    response=True
+                )
+            except BleakError as e:
+                if "connection status" in str(e):
+                    _LOGGER.debug("Connection dropped during authentication, will retry")
+                    return False
+                raise
+
             _LOGGER.debug("Authentication sent successfully")
             return True
-            
+                
         except Exception as e:
             _LOGGER.error("Authentication failed: %s", str(e), exc_info=True)
+            # Ensure client is disconnected on error
+            if self._client and self._client.is_connected:
+                await self._client.disconnect()
+            self._client = None
             return False
 
     async def async_poll(self, ble_device: BLEDevice) -> SensorUpdate:
