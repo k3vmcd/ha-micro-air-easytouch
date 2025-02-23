@@ -15,5 +15,5 @@
     "iot_class": "local_polling",
     "issue_tracker": "https://github.com/k3vmcd/ha-micro-air-easytouch/issues",
     "requirements": [],
-    "version": "0.1.1"
+    "version": "0.1.3"
 }
