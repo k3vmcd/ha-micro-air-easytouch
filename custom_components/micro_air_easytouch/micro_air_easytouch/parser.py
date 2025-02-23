@@ -171,42 +171,33 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
     async def _connect_to_device(self, ble_device: BLEDevice):
         """Connect to the device with retries"""
         try:
-            client = await establish_connection(
+            self._client = await establish_connection(
                 BleakClientWithServiceCache, 
                 ble_device, 
                 ble_device.address,
                 timeout=20.0
             )
-            # Discover services immediately after connection
-            _LOGGER.debug("Starting service discovery...")
-            await client.discover_services()
-            
-            # Ensure services have been discovered
-            _LOGGER.debug("Confirming service discovery...")
-            services = self._client.services
-            if not services:
-                # If services haven't been discovered yet, wait, check again, then trigger discovery if still not found
-                await asyncio.sleep(1)
-                services = self._client.services
-                if not services:
-                    await self._client.discover_services()
-                    services = self._client.services
-                    await asyncio.sleep(3)  # Larger delay after discovery
-                if not services:
-                    _LOGGER.error("Services not found")
-                    return False
 
-            # Log discovered services and characteristics
+            # Services should be automatically cached by BleakClientWithServiceCache
+            _LOGGER.debug("Checking for cached services...")
+            
+            # Give a moment for services to be available
+            if not self._client.services:
+                _LOGGER.debug("Waiting for services to be available...")
+                await asyncio.sleep(2)
+
+            # Verify services are available
+            if not self._client.services:
+                _LOGGER.error("No services available after connecting")
+                return False
+
+            # Log discovered services and characteristics for debugging
             for service in self._client.services:
                 _LOGGER.debug("Service found: %s", service.uuid)
                 for char in service.characteristics:
                     _LOGGER.debug("  Characteristic: %s", char.uuid)
 
-
-            return client
-        
-
-
+            return self._client
 
         except Exception as e:
             _LOGGER.error("Connection error: %s", str(e))
