@@ -134,7 +134,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         self._max_delay = 4.0
 
     def _get_operation_delay(self, hass, address: str, operation: str) -> float:
-        """Calculate delay for specific operations to implement exponential backoff.
+        """Calculate delay for specific operations from persistent storage.
         
         Args:
             address: Device bluetooth address
@@ -366,7 +366,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         for attempt in range(retries):
             try:
                 if not self._client or not self._client.is_connected:
-                    if not await self._reconnect_and_authenticate(ble_device):
+                    if not await self._reconnect_and_authenticate(hass, ble_device):
                         return False
                     
                 # Apply write-specific delay if needed
