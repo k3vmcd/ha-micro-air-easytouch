@@ -22,6 +22,7 @@ from sensor_state_data import SensorDeviceClass, SensorUpdate, Units
 from sensor_state_data.enum import StrEnum
 
 # Local imports
+from ..const import DOMAIN  # From root const.py
 from .const import (
     UUIDS,
     UPDATE_INTERVAL,
