@@ -508,7 +508,9 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             # Send status command with retry and log payload
             message = {"Type": "Get Status", "Zone": 0, "EM": self._email, "TM": int(time.time())}
             payload = bytes(json.dumps(message).encode('utf-8'))
-            _LOGGER.debug("Writing to jsonCmd: %s", payload.hex())
+            # Log a redacted version without email
+            debug_message = {"Type": "Get Status", "Zone": 0, "TM": message["TM"]}  # Exclude EM
+            _LOGGER.debug("Writing to jsonCmd (sanitized): %s", json.dumps(debug_message))
             if not await self._write_gatt_with_retry(
                 UUIDS["jsonCmd"], 
                 payload,
