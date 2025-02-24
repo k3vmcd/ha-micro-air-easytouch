@@ -253,6 +253,51 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             self._client = None
             return False
 
+    async def _write_gatt_with_retry(self, uuid: str, data: bytes, retries: int = 3) -> bool:
+        """Write GATT characteristic with retry."""
+        last_error = None
+        for attempt in range(retries):
+            try:
+                await self._client.write_gatt_char(uuid, data, response=True)
+                return True
+            except BleakError as e:
+                last_error = e
+                if attempt < retries - 1:
+                    _LOGGER.debug("GATT write failed, attempt %d/%d: %s", 
+                                attempt + 1, retries, str(e))
+                    await asyncio.sleep(0.5 * (attempt + 1))  # Progressive backoff
+                    # Check connection before continuing
+                    if not self._client or not self._client.is_connected:
+                        _LOGGER.error("Client disconnected during GATT write")
+                        return False
+                    continue
+        
+        _LOGGER.error("GATT write failed after %d attempts. Last error: %s", 
+                    retries, str(last_error))
+        return False
+    
+    async def _read_gatt_with_retry(self, characteristic, retries: int = 3) -> Optional[bytes]:
+        """Read GATT characteristic with retry."""
+        last_error = None
+        for attempt in range(retries):
+            try:
+                return await self._client.read_gatt_char(characteristic)
+            except BleakError as e:
+                last_error = e
+                if attempt < retries - 1:
+                    _LOGGER.debug("GATT read failed, attempt %d/%d: %s", 
+                                attempt + 1, retries, str(e))
+                    await asyncio.sleep(0.5 * (attempt + 1))  # Progressive backoff
+                    # Check connection before continuing
+                    if not self._client or not self._client.is_connected:
+                        _LOGGER.error("Client disconnected during GATT read")
+                        return None
+                    continue
+        
+        _LOGGER.error("GATT read failed after %d attempts. Last error: %s", 
+                    retries, str(last_error))
+        return None
+
     async def async_poll(self, ble_device: BLEDevice) -> SensorUpdate:
         """Poll the device to retrieve sensor values."""
         if self._password is None:
@@ -282,17 +327,19 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
 
             _LOGGER.debug("Connected and authenticated to BLE device: %s", ble_device.address)
 
-            # Send the "Get Status" command
+            # Send status command with retry
             message = {"Type": "Get Status", "Zone": 0, "EM": self._email, "TM": int(time.time())}
-            message_json = json.dumps(message)
-            await self._client.write_gatt_char(UUIDS["jsonCmd"], bytes(message_json.encode('utf-8')))
+            if not await self._write_gatt_with_retry(
+                UUIDS["jsonCmd"], 
+                bytes(json.dumps(message).encode('utf-8'))
+            ):
+                return self._finish_update()
 
-            # Wait briefly for the device to process the command (adjust as needed)
-            await asyncio.sleep(1)  # Give the device time to respond
-
-            # Read the response from jsonReturn
+            # Read response with retry
             json_char = self._client.services.get_characteristic(UUIDS["jsonReturn"])
-            json_payload = await self._client.read_gatt_char(json_char)
+            json_payload = await self._read_gatt_with_retry(json_char)
+            if not json_payload:
+                return self._finish_update()
             decrypted_status = self.decrypt(json_payload.decode('utf-8'))
 
             # SENSOR UPDATES
