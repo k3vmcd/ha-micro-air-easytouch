@@ -131,11 +131,9 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         self._email = email
         self._client = None
         self._event = asyncio.Event()
-        # Track delays per operation type per device
-        self._device_delays = {}  
         self._max_delay = 4.0
 
-    def _get_operation_delay(self, address: str, operation: str) -> float:
+    def _get_operation_delay(self, hass, address: str, operation: str) -> float:
         """Calculate delay for specific operations to implement exponential backoff.
         
         Args:
@@ -145,10 +143,10 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         Returns:
             float: Delay time in seconds
         """
-        device_delays = self._device_delays.get(address, {})
+        device_delays = hass.data.setdefault(DOMAIN, {}).setdefault('device_delays', {}).get(address, {})
         return device_delays.get(operation, {}).get('delay', 0.0)
 
-    def _increase_operation_delay(self, address: str, operation: str) -> float:
+    def _increase_operation_delay(self, hass, address: str, operation: str) -> float:
         """Increase delay for specific operation and device with persistence.
         
         Args:
@@ -158,35 +156,35 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         Returns:
             float: New delay time in seconds
         """
-        if address not in self._device_delays:
-            self._device_delays[address] = {}
+        delays = hass.data.setdefault(DOMAIN, {}).setdefault('device_delays', {})
+        if address not in delays:
+            delays[address] = {}
         
-        if operation not in self._device_delays[address]:
-            self._device_delays[address][operation] = {'delay': 0.0, 'failures': 0}
+        if operation not in delays[address]:
+            delays[address][operation] = {'delay': 0.0, 'failures': 0}
         
-        current = self._device_delays[address][operation]
+        current = delays[address][operation]
         current['failures'] += 1
-        # Exponential backoff with max limit, persists across polls
-        current['delay'] = min(0.5 * (2 ** min(current['failures'], 3)), self._max_delay)  # Cap exponent at 3
+        current['delay'] = min(0.5 * (2 ** min(current['failures'], 3)), self._max_delay)
         _LOGGER.debug("Increased delay for %s:%s to %.1fs (failures: %d)", 
                       address, operation, current['delay'], current['failures'])
         return current['delay']
 
-    def _adjust_operation_delay(self, address: str, operation: str) -> None:
+    def _adjust_operation_delay(self, hass, address: str, operation: str) -> None:
         """Adjust delay for specific operation after success, reducing gradually.
         
         Args:
             address: Device bluetooth address
             operation: Type of operation (connect, read, write, auth)
         """
-        if address in self._device_delays and operation in self._device_delays[address]:
-            current = self._device_delays[address][operation]
+        delays = hass.data.setdefault(DOMAIN, {}).setdefault('device_delays', {})
+        if address in delays and operation in delays[address]:
+            current = delays[address][operation]
             if current['failures'] > 0:
-                current['failures'] = max(0, current['failures'] - 1)  # Decay failures
-                current['delay'] = max(0.0, current['delay'] * 0.75)  # Reduce delay by 25%
+                current['failures'] = max(0, current['failures'] - 1)
+                current['delay'] = max(0.0, current['delay'] * 0.75)
                 _LOGGER.debug("Adjusted delay for %s:%s to %.1fs (failures: %d)", 
                               address, operation, current['delay'], current['failures'])
-            # Don’t reset to 0 unless failures = 0 and delay is small
             if current['failures'] == 0 and current['delay'] < 0.1:
                 current['delay'] = 0.0
                 _LOGGER.debug("Reset delay for %s:%s to 0.0s", address, operation)
@@ -362,7 +360,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             self._client = None
             return False
 
-    async def _write_gatt_with_retry(self, uuid: str, data: bytes, ble_device: BLEDevice, retries: int = 3) -> bool:
+    async def _write_gatt_with_retry(self, hass, uuid: str, data: bytes, ble_device: BLEDevice, retries: int = 3) -> bool:
         """Write GATT characteristic with retry and adaptive delay."""
         last_error = None
         for attempt in range(retries):
@@ -370,99 +368,93 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
                 if not self._client or not self._client.is_connected:
                     if not await self._reconnect_and_authenticate(ble_device):
                         return False
-
+                    
                 # Apply write-specific delay if needed
-                write_delay = self._get_operation_delay(ble_device.address, 'write')
+                write_delay = self._get_operation_delay(hass, ble_device.address, 'write')
                 if write_delay > 0:
                     await asyncio.sleep(write_delay)
 
                 await self._client.write_gatt_char(uuid, data, response=True)
-                self._adjust_operation_delay(ble_device.address, 'write')
+                self._adjust_operation_delay(hass, ble_device.address, 'write')
                 return True
-
+            
             except BleakError as e:
                 last_error = e
                 if attempt < retries - 1:
-                    delay = self._increase_operation_delay(ble_device.address, 'write')
-                    _LOGGER.debug(
-                        "GATT write failed for %s, attempt %d/%d. Using delay: %.1f", 
-                        ble_device.address, attempt + 1, retries, delay
-                    )
+                    delay = self._increase_operation_delay(hass, ble_device.address, 'write')
+                    _LOGGER.debug("GATT write failed for %s, attempt %d/%d. Using delay: %.1f", 
+                                  ble_device.address, attempt + 1, retries, delay)
                     continue
 
         _LOGGER.error("GATT write failed after %d attempts. Last error: %s", 
-                    retries, str(last_error))
+                      retries, str(last_error))
         return False
 
-    async def _reconnect_and_authenticate(self, ble_device: BLEDevice) -> bool:
+    async def _reconnect_and_authenticate(self, hass, ble_device: BLEDevice) -> bool:
         """Reconnect and re-authenticate with adaptive delays."""
         try:
-            # Apply connect-specific delay if needed
-            connect_delay = self._get_operation_delay(ble_device.address, 'connect')
+            connect_delay = self._get_operation_delay(hass, ble_device.address, 'connect')
             if connect_delay > 0:
                 await asyncio.sleep(connect_delay)
 
             _LOGGER.debug("Attempting reconnection for device: %s", ble_device.address)
             self._client = await self._connect_to_device(ble_device)
-            
+
             if not self._client or not self._client.is_connected:
-                self._increase_operation_delay(ble_device.address, 'connect')
+                self._increase_operation_delay(hass, ble_device.address, 'connect')
                 return False
             
-            self._adjust_operation_delay(ble_device.address, 'connect')
-            
+            self._adjust_operation_delay(hass, ble_device.address, 'connect')
+
             # Apply auth-specific delay if needed
-            auth_delay = self._get_operation_delay(ble_device.address, 'auth')
+            auth_delay = self._get_operation_delay(hass, ble_device.address, 'auth')
             if auth_delay > 0:
                 await asyncio.sleep(auth_delay)
 
             auth_result = await self.authenticate(self._password)
-            
-            if auth_result:
-                self._adjust_operation_delay(ble_device.address, 'auth')
-            else:
-                self._increase_operation_delay(ble_device.address, 'auth')
-            
-            return auth_result
 
+            if auth_result:
+                self._adjust_operation_delay(hass, ble_device.address, 'auth')
+            else:
+                self._increase_operation_delay(hass, ble_device.address, 'auth')
+            return auth_result
+        
         except Exception as e:
             _LOGGER.error("Reconnection failed: %s", str(e))
-            self._increase_operation_delay(ble_device.address, 'connect')
+            self._increase_operation_delay(hass, ble_device.address, 'connect')
             return False
 
-    async def _read_gatt_with_retry(self, characteristic, ble_device: BLEDevice, retries: int = 3) -> Optional[bytes]:
+    async def _read_gatt_with_retry(self, hass, characteristic, ble_device: BLEDevice, retries: int = 3) -> Optional[bytes]:
         """Read GATT characteristic with retry and operation-specific delay."""
         last_error = None
         for attempt in range(retries):
             try:
                 if not self._client or not self._client.is_connected:
-                    if not await self._reconnect_and_authenticate(ble_device):
+                    if not await self._reconnect_and_authenticate(hass, ble_device):
                         return None
-
+                    
                 # Apply read-specific delay if needed
-                read_delay = self._get_operation_delay(ble_device.address, 'read')
+                read_delay = self._get_operation_delay(hass, ble_device.address, 'read')
                 if read_delay > 0:
                     await asyncio.sleep(read_delay)
 
                 result = await self._client.read_gatt_char(characteristic)
-                self._adjust_operation_delay(ble_device.address, 'read')
+                self._adjust_operation_delay(hass, ble_device.address, 'read')
                 return result
-
+            
             except BleakError as e:
                 last_error = e
                 if attempt < retries - 1:
-                    delay = self._increase_operation_delay(ble_device.address, 'read')
-                    _LOGGER.debug(
-                        "GATT read failed for %s, attempt %d/%d. Using delay: %.1f", 
-                        ble_device.address, attempt + 1, retries, delay
-                    )
+                    delay = self._increase_operation_delay(hass, ble_device.address, 'read')
+                    _LOGGER.debug("GATT read failed for %s, attempt %d/%d. Using delay: %.1f", 
+                                  ble_device.address, attempt + 1, retries, delay)
                     continue
 
         _LOGGER.error("GATT read failed after %d attempts. Last error: %s", 
-                    retries, str(last_error))
+                      retries, str(last_error))
         return None
 
-    async def async_poll(self, ble_device: BLEDevice) -> SensorUpdate:
+    async def async_poll(self, hass, ble_device: BLEDevice) -> SensorUpdate:
         """Main polling function to retrieve current device state.
         
         This method:
@@ -473,6 +465,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         5. Properly disconnects
         
         Args:
+            hass: Home Assistant instance for persistent storage
             ble_device: The bluetooth device to poll
             
         Returns:
@@ -511,16 +504,12 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             # Log a redacted version without email
             debug_message = {"Type": "Get Status", "Zone": 0, "TM": message["TM"]}  # Exclude EM
             _LOGGER.debug("Writing to jsonCmd (sanitized): %s", json.dumps(debug_message))
-            if not await self._write_gatt_with_retry(
-                UUIDS["jsonCmd"], 
-                payload,
-                ble_device
-            ):
+            if not await self._write_gatt_with_retry(hass, UUIDS["jsonCmd"], payload, ble_device):
                 return self._finish_update()
 
             # Read response with retry and log response
             json_char = self._client.services.get_characteristic(UUIDS["jsonReturn"])
-            json_payload = await self._read_gatt_with_retry(json_char, ble_device)
+            json_payload = await self._read_gatt_with_retry(hass, json_char, ble_device)
             _LOGGER.debug("Read from jsonReturn: %s", json_payload.hex() if json_payload else "None")
             if not json_payload:
                 return self._finish_update()
