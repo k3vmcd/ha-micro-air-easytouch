@@ -149,7 +149,15 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         return device_delays.get(operation, {}).get('delay', 0.0)
 
     def _increase_operation_delay(self, address: str, operation: str) -> float:
-        """Increase delay for specific operation and device."""
+        """Increase delay for specific operation and device with persistence.
+        
+        Args:
+            address: Device bluetooth address
+            operation: Type of operation (connect, read, write, auth)
+            
+        Returns:
+            float: New delay time in seconds
+        """
         if address not in self._device_delays:
             self._device_delays[address] = {}
         
@@ -158,14 +166,30 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         
         current = self._device_delays[address][operation]
         current['failures'] += 1
-        # Exponential backoff with max limit
-        current['delay'] = min(0.5 * (2 ** current['failures']), self._max_delay)
+        # Exponential backoff with max limit, persists across polls
+        current['delay'] = min(0.5 * (2 ** min(current['failures'], 3)), self._max_delay)  # Cap exponent at 3
+        _LOGGER.debug("Increased delay for %s:%s to %.1fs (failures: %d)", 
+                      address, operation, current['delay'], current['failures'])
         return current['delay']
 
-    def _reset_operation_delay(self, address: str, operation: str) -> None:
-        """Reset delay for specific operation after success."""
+    def _adjust_operation_delay(self, address: str, operation: str) -> None:
+        """Adjust delay for specific operation after success, reducing gradually.
+        
+        Args:
+            address: Device bluetooth address
+            operation: Type of operation (connect, read, write, auth)
+        """
         if address in self._device_delays and operation in self._device_delays[address]:
-            self._device_delays[address][operation] = {'delay': 0.0, 'failures': 0}
+            current = self._device_delays[address][operation]
+            if current['failures'] > 0:
+                current['failures'] = max(0, current['failures'] - 1)  # Decay failures
+                current['delay'] = max(0.0, current['delay'] * 0.75)  # Reduce delay by 25%
+                _LOGGER.debug("Adjusted delay for %s:%s to %.1fs (failures: %d)", 
+                              address, operation, current['delay'], current['failures'])
+            # Don’t reset to 0 unless failures = 0 and delay is small
+            if current['failures'] == 0 and current['delay'] < 0.1:
+                current['delay'] = 0.0
+                _LOGGER.debug("Reset delay for %s:%s to 0.0s", address, operation)
 
     def _start_update(self, service_info: BluetoothServiceInfo) -> None:
         """Update from BLE advertisement data."""
@@ -353,7 +377,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
                     await asyncio.sleep(write_delay)
 
                 await self._client.write_gatt_char(uuid, data, response=True)
-                self._reset_operation_delay(ble_device.address, 'write')
+                self._adjust_operation_delay(ble_device.address, 'write')
                 return True
 
             except BleakError as e:
@@ -385,7 +409,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
                 self._increase_operation_delay(ble_device.address, 'connect')
                 return False
             
-            self._reset_operation_delay(ble_device.address, 'connect')
+            self._adjust_operation_delay(ble_device.address, 'connect')
             
             # Apply auth-specific delay if needed
             auth_delay = self._get_operation_delay(ble_device.address, 'auth')
@@ -395,7 +419,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             auth_result = await self.authenticate(self._password)
             
             if auth_result:
-                self._reset_operation_delay(ble_device.address, 'auth')
+                self._adjust_operation_delay(ble_device.address, 'auth')
             else:
                 self._increase_operation_delay(ble_device.address, 'auth')
             
@@ -421,7 +445,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
                     await asyncio.sleep(read_delay)
 
                 result = await self._client.read_gatt_char(characteristic)
-                self._reset_operation_delay(ble_device.address, 'read')
+                self._adjust_operation_delay(ble_device.address, 'read')
                 return result
 
             except BleakError as e:
@@ -481,18 +505,21 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
 
             _LOGGER.debug("Connected and authenticated to BLE device: %s", ble_device.address)
 
-            # Send status command with retry
+            # Send status command with retry and log payload
             message = {"Type": "Get Status", "Zone": 0, "EM": self._email, "TM": int(time.time())}
+            payload = bytes(json.dumps(message).encode('utf-8'))
+            _LOGGER.debug("Writing to jsonCmd: %s", payload.hex())
             if not await self._write_gatt_with_retry(
                 UUIDS["jsonCmd"], 
-                bytes(json.dumps(message).encode('utf-8')),
+                payload,
                 ble_device
             ):
                 return self._finish_update()
 
-            # Read response with retry
+            # Read response with retry and log response
             json_char = self._client.services.get_characteristic(UUIDS["jsonReturn"])
             json_payload = await self._read_gatt_with_retry(json_char, ble_device)
+            _LOGGER.debug("Read from jsonReturn: %s", json_payload.hex() if json_payload else "None")
             if not json_payload:
                 return self._finish_update()
             decrypted_status = self.decrypt(json_payload.decode('utf-8'))
