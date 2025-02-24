@@ -482,6 +482,8 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         
         try:
             _LOGGER.debug("Connecting to BLE device: %s", ble_device.address)
+            write_delay = self._get_operation_delay(hass, ble_device.address, 'write')
+            _LOGGER.debug("Current write delay for %s: %.1fs", ble_device.address, write_delay)
             self._client = await self._connect_to_device(ble_device)
 
             if not self._client or not self._client.is_connected:
