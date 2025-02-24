@@ -132,7 +132,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         self._email = email
         self._client = None
         self._event = asyncio.Event()
-        self._max_delay = 4.0
+        self._max_delay = 6.0
 
     def _get_operation_delay(self, hass, address: str, operation: str) -> float:
         """Calculate delay for specific operations from persistent storage.
@@ -495,11 +495,22 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             _LOGGER.debug("Device details: %s", ble_device.details)
 
             # Authenticate with the device
+            # Apply delay after connect before authenticate
+            connect_delay = self._get_operation_delay(hass, ble_device.address, 'connect')
+            if connect_delay > 0:
+                _LOGGER.debug("Applying connect delay of %.1fs before authentication", connect_delay)
+                await asyncio.sleep(connect_delay)
             if not await self.authenticate(self._password):
                 _LOGGER.error("Failed to authenticate with device")
                 return self._finish_update()
 
             _LOGGER.debug("Connected and authenticated to BLE device: %s", ble_device.address)
+
+            # Apply delay after authenticate before write
+            auth_delay = self._get_operation_delay(hass, ble_device.address, 'auth')
+            if auth_delay > 0:
+                _LOGGER.debug("Applying auth delay of %.1fs before write", auth_delay)
+                await asyncio.sleep(auth_delay)
 
             # Send status command with retry and log payload
             message = {"Type": "Get Status", "Zone": 0, "EM": self._email, "TM": int(time.time())}
