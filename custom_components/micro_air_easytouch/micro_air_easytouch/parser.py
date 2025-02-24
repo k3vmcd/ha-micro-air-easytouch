@@ -1,10 +1,11 @@
+# Standard library imports for basic functionality
 from __future__ import annotations
-
 import logging
 import asyncio
 import time
 import json
 
+# Bluetooth-related imports for device communication
 from bleak import BLEDevice
 from bleak.exc import BleakError, BleakDBusError, BleakDeviceNotFoundError
 from bleak_retry_connector import (
@@ -12,12 +13,15 @@ from bleak_retry_connector import (
     establish_connection,
     retry_bluetooth_connection_error,
 )
+
+# Home Assistant specific imports for device integration
 from bluetooth_data_tools import short_address
 from bluetooth_sensor_state_data import BluetoothData
 from home_assistant_bluetooth import BluetoothServiceInfo
 from sensor_state_data import SensorDeviceClass, SensorUpdate, Units
 from sensor_state_data.enum import StrEnum
 
+# Local imports
 from .const import (
     UUIDS,
     UPDATE_INTERVAL,
@@ -25,12 +29,21 @@ from .const import (
 
 from typing import Optional, Any
 
+# Set up logging
 _LOGGER = logging.getLogger(__name__)
 
-# Custom retry decorator for authentication attempts
+# Custom retry decorator for handling authentication attempts
 from functools import wraps
 def retry_authentication(retries=3, delay=1):
-    """Custom retry decorator for authentication attempts."""
+    """Custom retry decorator for authentication attempts.
+    
+    Args:
+        retries (int): Number of retry attempts (default: 3)
+        delay (int): Delay in seconds between retries (default: 1)
+    
+    Returns:
+        decorator: A decorator that wraps the authentication function with retry logic
+    """
     def decorator(func):
         @wraps(func)
         async def wrapper(*args, **kwargs):
@@ -80,7 +93,11 @@ def retry_authentication(retries=3, delay=1):
     return decorator
 
 class MicroAirEasyTouchSensor(StrEnum):
-
+    """Enumeration of all available sensors for the MicroAir EasyTouch device.
+    
+    These represent different measurable or controllable aspects of the device.
+    """
+    
     FACE_PLATE_TEMPERATURE = "face_plate_temperature"   
     CURRENT_MODE = "current_mode"
     MODE = "mode"
@@ -92,15 +109,87 @@ class MicroAirEasyTouchSensor(StrEnum):
     DRY_SP = "dry_sp"
 
 class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
-    """Data for MicroAirEasyTouch sensors."""
+    """Main class for handling MicroAir EasyTouch device data and communication.
+    
+    This class manages:
+    - Device authentication
+    - Data parsing
+    - Bluetooth communication
+    - Sensor updates
+    - Error handling and retry logic
+    """
 
     def __init__(self, password: str | None = None, email: str | None = None) -> None:
-        """Initialize the data handler."""
+        """Initialize the device data handler with optional credentials.
+        
+        Args:
+            password: Device authentication password
+            email: User email for device commands
+        """
         super().__init__()
         self._password = password
         self._email = email
         self._client = None
         self._event = asyncio.Event()
+        # Track delays per operation type per device
+        self._device_delays = {}  
+        self._max_delay = 4.0
+
+    def _get_operation_delay(self, address: str, operation: str) -> float:
+        """Calculate delay for specific operations to implement exponential backoff.
+        
+        Args:
+            address: Device bluetooth address
+            operation: Type of operation (connect, read, write, auth)
+            
+        Returns:
+            float: Delay time in seconds
+        """
+        device_delays = self._device_delays.get(address, {})
+        return device_delays.get(operation, {}).get('delay', 0.0)
+
+    def _increase_operation_delay(self, address: str, operation: str) -> float:
+        """Increase delay for specific operation and device with persistence.
+        
+        Args:
+            address: Device bluetooth address
+            operation: Type of operation (connect, read, write, auth)
+            
+        Returns:
+            float: New delay time in seconds
+        """
+        if address not in self._device_delays:
+            self._device_delays[address] = {}
+        
+        if operation not in self._device_delays[address]:
+            self._device_delays[address][operation] = {'delay': 0.0, 'failures': 0}
+        
+        current = self._device_delays[address][operation]
+        current['failures'] += 1
+        # Exponential backoff with max limit, persists across polls
+        current['delay'] = min(0.5 * (2 ** min(current['failures'], 3)), self._max_delay)  # Cap exponent at 3
+        _LOGGER.debug("Increased delay for %s:%s to %.1fs (failures: %d)", 
+                      address, operation, current['delay'], current['failures'])
+        return current['delay']
+
+    def _adjust_operation_delay(self, address: str, operation: str) -> None:
+        """Adjust delay for specific operation after success, reducing gradually.
+        
+        Args:
+            address: Device bluetooth address
+            operation: Type of operation (connect, read, write, auth)
+        """
+        if address in self._device_delays and operation in self._device_delays[address]:
+            current = self._device_delays[address][operation]
+            if current['failures'] > 0:
+                current['failures'] = max(0, current['failures'] - 1)  # Decay failures
+                current['delay'] = max(0.0, current['delay'] * 0.75)  # Reduce delay by 25%
+                _LOGGER.debug("Adjusted delay for %s:%s to %.1fs (failures: %d)", 
+                              address, operation, current['delay'], current['failures'])
+            # Don’t reset to 0 unless failures = 0 and delay is small
+            if current['failures'] == 0 and current['delay'] < 0.1:
+                current['delay'] = 0.0
+                _LOGGER.debug("Reset delay for %s:%s to 0.0s", address, operation)
 
     def _start_update(self, service_info: BluetoothServiceInfo) -> None:
         """Update from BLE advertisement data."""
@@ -126,6 +215,17 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
     
     # Function to parse the data from the device
     def decrypt(self, data: bytes) -> bytes:
+        """Parse and decode the device status data.
+        
+        Converts raw JSON data into a human-readable format with proper
+        mode mappings and status information.
+        
+        Args:
+            data: Raw JSON data from device
+            
+        Returns:
+            dict: Decoded device status information
+        """
         status=json.loads(data)
         info=status['Z_sts']['0']
         param=status['PRM']
@@ -205,7 +305,16 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
     
     @retry_authentication(retries=3, delay=2)
     async def authenticate(self, password: str) -> bool:
-        """Authenticate with the device using password."""
+        """Authenticate with the device using the provided password.
+        
+        Implements retry logic and proper connection handling.
+        
+        Args:
+            password: Device authentication password
+            
+        Returns:
+            bool: True if authentication successful, False otherwise
+        """
         try:
             # Ensure client exists and is connected and wait if not
             if not self._client or not self._client.is_connected:
@@ -253,53 +362,122 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             self._client = None
             return False
 
-    async def _write_gatt_with_retry(self, uuid: str, data: bytes, retries: int = 3) -> bool:
-        """Write GATT characteristic with retry."""
+    async def _write_gatt_with_retry(self, uuid: str, data: bytes, ble_device: BLEDevice, retries: int = 3) -> bool:
+        """Write GATT characteristic with retry and adaptive delay."""
         last_error = None
         for attempt in range(retries):
             try:
+                if not self._client or not self._client.is_connected:
+                    if not await self._reconnect_and_authenticate(ble_device):
+                        return False
+
+                # Apply write-specific delay if needed
+                write_delay = self._get_operation_delay(ble_device.address, 'write')
+                if write_delay > 0:
+                    await asyncio.sleep(write_delay)
+
                 await self._client.write_gatt_char(uuid, data, response=True)
+                self._adjust_operation_delay(ble_device.address, 'write')
                 return True
+
             except BleakError as e:
                 last_error = e
                 if attempt < retries - 1:
-                    _LOGGER.debug("GATT write failed, attempt %d/%d: %s", 
-                                attempt + 1, retries, str(e))
-                    await asyncio.sleep(0.5 * (attempt + 1))  # Progressive backoff
-                    # Check connection before continuing
-                    if not self._client or not self._client.is_connected:
-                        _LOGGER.error("Client disconnected during GATT write")
-                        return False
+                    delay = self._increase_operation_delay(ble_device.address, 'write')
+                    _LOGGER.debug(
+                        "GATT write failed for %s, attempt %d/%d. Using delay: %.1f", 
+                        ble_device.address, attempt + 1, retries, delay
+                    )
                     continue
-        
+
         _LOGGER.error("GATT write failed after %d attempts. Last error: %s", 
                     retries, str(last_error))
         return False
-    
-    async def _read_gatt_with_retry(self, characteristic, retries: int = 3) -> Optional[bytes]:
-        """Read GATT characteristic with retry."""
+
+    async def _reconnect_and_authenticate(self, ble_device: BLEDevice) -> bool:
+        """Reconnect and re-authenticate with adaptive delays."""
+        try:
+            # Apply connect-specific delay if needed
+            connect_delay = self._get_operation_delay(ble_device.address, 'connect')
+            if connect_delay > 0:
+                await asyncio.sleep(connect_delay)
+
+            _LOGGER.debug("Attempting reconnection for device: %s", ble_device.address)
+            self._client = await self._connect_to_device(ble_device)
+            
+            if not self._client or not self._client.is_connected:
+                self._increase_operation_delay(ble_device.address, 'connect')
+                return False
+            
+            self._adjust_operation_delay(ble_device.address, 'connect')
+            
+            # Apply auth-specific delay if needed
+            auth_delay = self._get_operation_delay(ble_device.address, 'auth')
+            if auth_delay > 0:
+                await asyncio.sleep(auth_delay)
+
+            auth_result = await self.authenticate(self._password)
+            
+            if auth_result:
+                self._adjust_operation_delay(ble_device.address, 'auth')
+            else:
+                self._increase_operation_delay(ble_device.address, 'auth')
+            
+            return auth_result
+
+        except Exception as e:
+            _LOGGER.error("Reconnection failed: %s", str(e))
+            self._increase_operation_delay(ble_device.address, 'connect')
+            return False
+
+    async def _read_gatt_with_retry(self, characteristic, ble_device: BLEDevice, retries: int = 3) -> Optional[bytes]:
+        """Read GATT characteristic with retry and operation-specific delay."""
         last_error = None
         for attempt in range(retries):
             try:
-                return await self._client.read_gatt_char(characteristic)
+                if not self._client or not self._client.is_connected:
+                    if not await self._reconnect_and_authenticate(ble_device):
+                        return None
+
+                # Apply read-specific delay if needed
+                read_delay = self._get_operation_delay(ble_device.address, 'read')
+                if read_delay > 0:
+                    await asyncio.sleep(read_delay)
+
+                result = await self._client.read_gatt_char(characteristic)
+                self._adjust_operation_delay(ble_device.address, 'read')
+                return result
+
             except BleakError as e:
                 last_error = e
                 if attempt < retries - 1:
-                    _LOGGER.debug("GATT read failed, attempt %d/%d: %s", 
-                                attempt + 1, retries, str(e))
-                    await asyncio.sleep(0.5 * (attempt + 1))  # Progressive backoff
-                    # Check connection before continuing
-                    if not self._client or not self._client.is_connected:
-                        _LOGGER.error("Client disconnected during GATT read")
-                        return None
+                    delay = self._increase_operation_delay(ble_device.address, 'read')
+                    _LOGGER.debug(
+                        "GATT read failed for %s, attempt %d/%d. Using delay: %.1f", 
+                        ble_device.address, attempt + 1, retries, delay
+                    )
                     continue
-        
+
         _LOGGER.error("GATT read failed after %d attempts. Last error: %s", 
                     retries, str(last_error))
         return None
 
     async def async_poll(self, ble_device: BLEDevice) -> SensorUpdate:
-        """Poll the device to retrieve sensor values."""
+        """Main polling function to retrieve current device state.
+        
+        This method:
+        1. Connects to the device
+        2. Authenticates
+        3. Retrieves current status
+        4. Updates all sensor values
+        5. Properly disconnects
+        
+        Args:
+            ble_device: The bluetooth device to poll
+            
+        Returns:
+            SensorUpdate: Updated sensor values for Home Assistant
+        """
         if self._password is None:
             _LOGGER.debug("Device in initial setup mode - skipping authentication")
             return self._finish_update()
@@ -327,17 +505,23 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
 
             _LOGGER.debug("Connected and authenticated to BLE device: %s", ble_device.address)
 
-            # Send status command with retry
+            # Send status command with retry and log payload
             message = {"Type": "Get Status", "Zone": 0, "EM": self._email, "TM": int(time.time())}
+            payload = bytes(json.dumps(message).encode('utf-8'))
+            # Log a redacted version without email
+            debug_message = {"Type": "Get Status", "Zone": 0, "TM": message["TM"]}  # Exclude EM
+            _LOGGER.debug("Writing to jsonCmd (sanitized): %s", json.dumps(debug_message))
             if not await self._write_gatt_with_retry(
                 UUIDS["jsonCmd"], 
-                bytes(json.dumps(message).encode('utf-8'))
+                payload,
+                ble_device
             ):
                 return self._finish_update()
 
-            # Read response with retry
+            # Read response with retry and log response
             json_char = self._client.services.get_characteristic(UUIDS["jsonReturn"])
-            json_payload = await self._read_gatt_with_retry(json_char)
+            json_payload = await self._read_gatt_with_retry(json_char, ble_device)
+            _LOGGER.debug("Read from jsonReturn: %s", json_payload.hex() if json_payload else "None")
             if not json_payload:
                 return self._finish_update()
             decrypted_status = self.decrypt(json_payload.decode('utf-8'))
