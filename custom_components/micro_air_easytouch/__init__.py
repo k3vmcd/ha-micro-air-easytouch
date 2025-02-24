@@ -50,7 +50,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             return None
         try:
             _LOGGER.debug("Found BLE device, initiating poll")
-            update = await data.async_poll(ble_device)
+            update = await data.async_poll(hass, ble_device)  # Pass hass
             _LOGGER.debug("Poll completed successfully: %s", update)
             return sensor_update_to_bluetooth_data_update(update)
         except Exception as e:
