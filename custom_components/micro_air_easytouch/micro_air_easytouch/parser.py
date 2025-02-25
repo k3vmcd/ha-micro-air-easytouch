@@ -531,15 +531,24 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
 
             # SENSOR UPDATES
 
-            # Update the face plate temperature
+            # Update the face plate temperature with validation
             face_plate_temperature = decrypted_status.get('facePlateTemperature', 0)
-            self.update_sensor(
-                key=str(MicroAirEasyTouchSensor.FACE_PLATE_TEMPERATURE),
-                native_unit_of_measurement=Units.TEMP_FAHRENHEIT,
-                native_value=face_plate_temperature,
-                device_class=SensorDeviceClass.TEMPERATURE,
-                name="Face Plate Temperature",
-            )
+            # Discard only clearly impossible temperatures
+            # Lower bound: -100°F (beyond record lows)
+            # Upper bound: 200°F (extreme heat in enclosed RV)
+            if -100 <= face_plate_temperature <= 200:
+                self.update_sensor(
+                    key=str(MicroAirEasyTouchSensor.FACE_PLATE_TEMPERATURE),
+                    native_unit_of_measurement=Units.TEMP_FAHRENHEIT,
+                    native_value=face_plate_temperature,
+                    device_class=SensorDeviceClass.TEMPERATURE,
+                    name="Face Plate Temperature",
+                )
+            else:
+                _LOGGER.warning(
+                    "Discarding invalid faceplate temperature reading: %s°F", 
+                    face_plate_temperature
+                )
 
             # Update the mode
             mode = decrypted_status.get('mode', 'unknown')
