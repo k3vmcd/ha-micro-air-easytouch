@@ -16,6 +16,9 @@ Reads data for the following sensors:
 - Cool Setpoint
 - Dry Setpoint
 
-This integration does not currently allow user to control their EasyTouch device from Home Assistant (i.e., this pulls read-only sensor data).
+Provides the following controls:
+- Reboot Button: Allows you to restart your EasyTouch device
+
+Note: This integration primarily provides read-only sensor data. The reboot button is currently the only control available.
 
 In addition, whenever the manufacturer mobile app connects to the device via bluetooth, Home Assistant will be temporarily disconnected and does not receive data.
