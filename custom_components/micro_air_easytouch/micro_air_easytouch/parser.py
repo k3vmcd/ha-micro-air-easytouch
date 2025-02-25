@@ -634,3 +634,79 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             self._client = None
             self._event.clear()
             _LOGGER.debug("Disconnected from BLE device")
+
+    # Button functions
+    async def reboot_device(self, hass, ble_device: BLEDevice) -> bool:
+        """Reboot the device by sending reset command."""
+        try:
+            _LOGGER.debug("Attempting to reboot device: %s", ble_device.address)
+            
+            # Store BLE device reference
+            self._ble_device = ble_device
+            
+            # Connect and authenticate
+            self._client = await self._connect_to_device(ble_device)
+            if not self._client or not self._client.is_connected:
+                _LOGGER.error("Failed to connect for reboot")
+                return False
+                    
+            if not await self.authenticate(self._password):
+                _LOGGER.error("Failed to authenticate for reboot")
+                return False
+                    
+            try:
+                # Add delay for write operation stability
+                write_delay = self._get_operation_delay(hass, ble_device.address, 'write')
+                if write_delay > 0:
+                    await asyncio.sleep(write_delay)
+                
+                # Prepare reset command
+                reset_cmd = {
+                    "Type": "Change",
+                    "Changes": {
+                        "zone": 0,
+                        "reset": " OK"
+                    }
+                }
+                
+                # Convert to JSON string and encode
+                cmd_bytes = json.dumps(reset_cmd).encode()
+                
+                try:
+                    # Send the reboot command using jsonCmd characteristic
+                    await self._client.write_gatt_char(
+                        UUIDS["jsonCmd"],
+                        cmd_bytes,
+                        response=True
+                    )
+                    _LOGGER.info("Reboot command sent successfully")
+                    return True
+                    
+                except BleakError as e:
+                    # Check if this is the expected disconnect error
+                    if "Error" in str(e) and "133" in str(e):
+                        _LOGGER.info("Device is rebooting as expected")
+                        return True
+                    else:
+                        _LOGGER.error("Failed to send reboot command: %s", str(e))
+                        self._increase_operation_delay(hass, ble_device.address, 'write')
+                        return False
+                    
+            except Exception as e:
+                _LOGGER.error("Failed to send reboot command: %s", str(e))
+                self._increase_operation_delay(hass, ble_device.address, 'write')
+                return False
+                    
+        except Exception as e:
+            _LOGGER.error("Error during reboot: %s", str(e))
+            return False
+                
+        finally:
+            # Clean up
+            try:
+                if self._client and self._client.is_connected:
+                    await self._client.disconnect()
+            except Exception as e:
+                _LOGGER.debug("Error disconnecting after reboot: %s", str(e))
+            self._client = None
+            self._ble_device = None  # Clear stored reference
