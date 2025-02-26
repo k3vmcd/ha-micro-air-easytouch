@@ -1,19 +1,19 @@
 {
-    "domain": "micro_air_easytouch",
-    "name": "Micro-Air EasyTouch Thermostat",
-    "bluetooth": [
-        {
-          "local_name": "EasyTouch*",
-          "connectable": true
-        }
-      ],
-    "codeowners": ["@k3vmcd"],
-    "config_flow": true,
-    "dependencies": ["bluetooth_adapters"],
-    "documentation": "https://github.com/k3vmcd/ha-micro-air-easytouch",
-    "integration_type": "device",
-    "iot_class": "local_polling",
-    "issue_tracker": "https://github.com/k3vmcd/ha-micro-air-easytouch/issues",
-    "requirements": [],
-    "version": "0.1.10"
+  "domain": "micro_air_easytouch",
+  "name": "Micro-Air EasyTouch Thermostat",
+  "bluetooth": [
+      {
+        "local_name": "EasyTouch*",
+        "connectable": true
+      }
+  ],
+  "codeowners": ["@k3vmcd"],
+  "config_flow": true,
+  "dependencies": ["bluetooth_adapters"],
+  "documentation": "https://github.com/k3vmcd/ha-micro-air-easytouch",
+  "integration_type": "device",
+  "iot_class": "local_push",
+  "issue_tracker": "https://github.com/k3vmcd/ha-micro-air-easytouch/issues",
+  "requirements": [],
+  "version": "0.1.11"
 }

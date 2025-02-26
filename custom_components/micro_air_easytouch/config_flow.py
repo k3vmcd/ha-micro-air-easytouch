@@ -1,5 +1,4 @@
 """Config flow for MicroAirEasyTouch integration."""
-
 from __future__ import annotations
 
 from typing import Any
@@ -14,9 +13,8 @@ from homeassistant.config_entries import ConfigFlow
 from homeassistant.data_entry_flow import FlowResult
 from homeassistant.const import CONF_ADDRESS, CONF_PASSWORD, CONF_USERNAME
 
-from .micro_air_easytouch import MicroAirEasyTouchBluetoothDeviceData
+from .micro_air_easytouch.parser import MicroAirEasyTouchBluetoothDeviceData  # Corrected import
 from .const import DOMAIN
-
 
 class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for MicroAirEasyTouch."""
@@ -49,12 +47,11 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
         errors = {}
         if user_input is not None:
             try:
-                # Update the device with the password
                 assert self._discovered_device is not None
                 self._discovered_device._email = user_input[CONF_USERNAME]
                 self._discovered_device._password = user_input[CONF_PASSWORD]
                 return await self.async_step_bluetooth_confirm(user_input)
-            except Exception:  # pylint: disable=broad-except
+            except Exception:
                 errors["base"] = "invalid_auth"
 
         return self.async_show_form(
@@ -77,7 +74,7 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
         title = device.title or device.get_device_name() or discovery_info.name
         if user_input is not None:
             return self.async_create_entry(
-                title=title, 
+                title=title,
                 data={
                     CONF_USERNAME: self._discovered_device._email,
                     CONF_PASSWORD: self._discovered_device._password,
@@ -89,7 +86,7 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
         placeholders = {"name": title}
         self.context["title_placeholders"] = placeholders
         return self.async_show_form(
-            step_id="bluetooth_confirm", 
+            step_id="bluetooth_confirm",
             description_placeholders=placeholders
         )
 
