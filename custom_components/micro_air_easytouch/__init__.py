@@ -26,7 +26,7 @@ from .micro_air_easytouch.const import UPDATE_INTERVAL
 from .const import DOMAIN
 from .sensor import sensor_update_to_bluetooth_data_update
 
-PLATFORMS: Final = [Platform.SENSOR, Platform.BUTTON]
+PLATFORMS: Final = [Platform.SENSOR, Platform.BUTTON, Platform.CLIMATE]
 # PLATFORMS: list[Platform] = [Platform.SENSOR]
 
 _LOGGER = logging.getLogger(__name__)

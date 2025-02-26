@@ -719,3 +719,22 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
                 _LOGGER.debug("Error disconnecting after reboot: %s", str(e))
             self._client = None
             self._ble_device = None  # Clear stored reference
+
+    async def send_command(self, hass, ble_device: BLEDevice, command: dict) -> bool:
+        """Send command to device."""
+        try:
+            _LOGGER.debug("Sending command to device: %s", command)
+            
+            if not self._client or not self._client.is_connected:
+                self._client = await self._connect_to_device(ble_device)
+                if not self._client or not self._client.is_connected:
+                    return False
+                if not await self.authenticate(self._password):
+                    return False
+                    
+            command_bytes = json.dumps(command).encode()
+            return await self._write_gatt_with_retry(hass, UUIDS["jsonCmd"], command_bytes, ble_device)
+            
+        except Exception as e:
+            _LOGGER.error("Error sending command: %s", str(e))
+            return False
