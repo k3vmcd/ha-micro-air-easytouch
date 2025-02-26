@@ -38,6 +38,7 @@ HA_MODE_TO_EASY_MODE = {
     HVACMode.FAN_ONLY: 1,
     HVACMode.COOL: 2,
     HVACMode.HEAT: 4,
+    HVACMode.DRY: 6,  # Add dry mode mapping
     HVACMode.AUTO: 11,
 }
 
@@ -47,6 +48,8 @@ FAN_MODES = {
     FAN_OFF: 0,
     FAN_LOW: 1,
     FAN_HIGH: 2,
+    "cycledL": 65,  # Add cycled low mode
+    "cycledH": 66,  # Add cycled high mode
     FAN_AUTO: 128,
 }
 
@@ -77,6 +80,7 @@ class MicroAirEasyTouchClimate(ClimateEntity):
         HVACMode.COOL,
         HVACMode.AUTO,
         HVACMode.FAN_ONLY,
+        HVACMode.DRY,  # Add dry mode
     ]
     _attr_fan_modes = list(FAN_MODES.keys())
     
@@ -213,6 +217,18 @@ class MicroAirEasyTouchClimate(ClimateEntity):
             elif mode == "full auto":
                 return FAN_AUTO
         return FAN_AUTO
+
+    @property
+    def fan_modes(self) -> list[str]:
+        """Return the list of available fan modes."""
+        return [
+            FAN_OFF,
+            FAN_LOW,
+            FAN_HIGH,
+            "cycledL",
+            "cycledH",
+            FAN_AUTO,
+        ]
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature."""
