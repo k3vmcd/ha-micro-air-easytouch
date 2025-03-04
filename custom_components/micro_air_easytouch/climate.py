@@ -10,6 +10,7 @@ from homeassistant.components.climate import (
     ClimateEntity,
     ClimateEntityFeature,
     HVACMode,
+    HVACAction,
 )
 from homeassistant.const import (
     ATTR_TEMPERATURE,
@@ -23,30 +24,16 @@ from homeassistant.components.bluetooth import async_ble_device_from_address
 
 from .const import DOMAIN
 from .micro_air_easytouch.parser import MicroAirEasyTouchBluetoothDeviceData
-from .micro_air_easytouch.const import UUIDS
+from .micro_air_easytouch.const import (
+    UUIDS,
+    HA_MODE_TO_EASY_MODE,
+    EASY_MODE_TO_HA_MODE,
+    FAN_MODES_FULL,
+    FAN_MODES_FAN_ONLY,
+    FAN_MODES_REVERSE,
+)
 
 _LOGGER = logging.getLogger(__name__)
-
-# Map EasyTouch modes to Home Assistant modes
-HA_MODE_TO_EASY_MODE = {
-    HVACMode.OFF: 0,
-    HVACMode.FAN_ONLY: 1,
-    HVACMode.COOL: 2,
-    HVACMode.HEAT: 4,
-    HVACMode.DRY: 6,
-    HVACMode.AUTO: 11,
-}
-EASY_MODE_TO_HA_MODE = {v: k for k, v in HA_MODE_TO_EASY_MODE.items()}
-
-FAN_MODES = {
-    "off": 0,
-    "manualL": 1,
-    "manualH": 2,
-    "cycledL": 65,
-    "cycledH": 66,
-    "full auto": 128,
-}
-FAN_MODES_REVERSE = {v: k for k, v in FAN_MODES.items()}
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -67,15 +54,7 @@ class MicroAirEasyTouchClimate(ClimateEntity):
         | ClimateEntityFeature.FAN_MODE
     )
     _attr_temperature_unit = UnitOfTemperature.FAHRENHEIT
-    _attr_hvac_modes = [
-        HVACMode.OFF,
-        HVACMode.HEAT,
-        HVACMode.COOL,
-        HVACMode.AUTO,
-        HVACMode.FAN_ONLY,
-        HVACMode.DRY,
-    ]
-    _attr_fan_modes = list(FAN_MODES.keys())
+    _attr_hvac_modes = list(HA_MODE_TO_EASY_MODE.keys())
 
     def __init__(self, data: MicroAirEasyTouchBluetoothDeviceData, mac_address: str) -> None:
         """Initialize the climate."""
@@ -150,25 +129,56 @@ class MicroAirEasyTouchClimate(ClimateEntity):
     @property
     def hvac_mode(self) -> HVACMode:
         """Return hvac operation mode."""
-        mode = self._state.get("mode", "off")
-        if mode == "off":
-            return HVACMode.OFF
-        elif mode == "fan":
-            return HVACMode.FAN_ONLY
-        elif mode in ["cool", "cool_on"]:
-            return HVACMode.COOL
-        elif mode in ["heat", "heat_on"]:
-            return HVACMode.HEAT
-        elif mode == "auto":
-            return HVACMode.AUTO
-        elif mode == "dry":
-            return HVACMode.DRY
-        return HVACMode.OFF
+        mode_num = self._state.get("mode_num", 0)
+        return EASY_MODE_TO_HA_MODE.get(mode_num, HVACMode.OFF)
+
+    @property
+    def hvac_action(self) -> HVACAction | None:
+        """Return the current HVAC action."""
+        current_mode = self._state.get("current_mode")
+        if self.hvac_mode == HVACMode.OFF:
+            return HVACAction.OFF
+        elif current_mode == "fan":
+            return HVACAction.FAN
+        elif current_mode in ["cool", "cool_on"]:
+            return HVACAction.COOLING
+        elif current_mode in ["heat", "heat_on"]:
+            return HVACAction.HEATING
+        elif current_mode == "dry":
+            return HVACAction.DRYING
+        elif current_mode == "auto":
+            # In auto mode, determine action based on temperature
+            current_temp = self.current_temperature
+            low = self.target_temperature_low
+            high = self.target_temperature_high
+            if current_temp is not None and low is not None and high is not None:
+                if current_temp < low:
+                    return HVACAction.HEATING
+                elif current_temp > high:
+                    return HVACAction.COOLING
+            return HVACAction.IDLE
+        return HVACAction.IDLE
 
     @property
     def fan_mode(self) -> str | None:
-        """Return the fan setting."""
-        return self._state.get("fan_mode", "full auto")
+        """Return the current fan mode based on HVAC mode."""
+        if self.hvac_mode == HVACMode.FAN_ONLY:
+            fan_mode_num = self._state.get("fan_mode_num", 0)
+            return FAN_MODES_FAN_ONLY.get(fan_mode_num, "off")
+        elif self.hvac_mode == HVACMode.COOL:
+            return self._state.get("cool_fan_mode", "full auto")
+        elif self.hvac_mode == HVACMode.HEAT:
+            return self._state.get("heat_fan_mode", "full auto")
+        elif self.hvac_mode == HVACMode.AUTO:
+            return self._state.get("auto_fan_mode", "full auto")
+        return "full auto"
+
+    @property
+    def fan_modes(self) -> list[str]:
+        """Return available fan modes based on current HVAC mode."""
+        if self.hvac_mode == HVACMode.FAN_ONLY:
+            return list(FAN_MODES_FAN_ONLY.keys())
+        return list(FAN_MODES_FULL.keys())
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature."""
@@ -220,10 +230,23 @@ class MicroAirEasyTouchClimate(ClimateEntity):
             _LOGGER.error("Could not find BLE device")
             return
 
-        fan_value = FAN_MODES.get(fan_mode)
-        if fan_value is not None:
-            message = {"Type": "Change", "Changes": {"zone": 0, "fanOnly": fan_value}}
-            await self._data.send_command(self.hass, ble_device, message)
+        if self.hvac_mode == HVACMode.FAN_ONLY:
+            fan_value = FAN_MODES_FAN_ONLY.get(fan_mode)
+            if fan_value is not None:
+                message = {"Type": "Change", "Changes": {"zone": 0, "fanOnly": fan_value}}
+                await self._data.send_command(self.hass, ble_device, message)
+        else:
+            fan_value = FAN_MODES_FULL.get(fan_mode)
+            if fan_value is not None:
+                changes = {"zone": 0}
+                if self.hvac_mode == HVACMode.COOL:
+                    changes["coolFan"] = fan_value
+                elif self.hvac_mode == HVACMode.HEAT:
+                    changes["heatFan"] = fan_value
+                elif self.hvac_mode == HVACMode.AUTO:
+                    changes["autoFan"] = fan_value
+                message = {"Type": "Change", "Changes": changes}
+                await self._data.send_command(self.hass, ble_device, message)
 
     async def async_update(self) -> None:
         """Update the entity state manually if needed."""

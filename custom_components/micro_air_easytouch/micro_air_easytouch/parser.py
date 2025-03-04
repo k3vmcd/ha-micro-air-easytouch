@@ -126,7 +126,8 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         info = status['Z_sts']['0']
         param = status['PRM']
         modes = {0: "off", 5: "heat_on", 4: "heat", 3: "cool_on", 2: "cool", 1: "fan", 11: "auto"}
-        fan_modes = {0: "off", 1: "manualL", 2: "manualH", 65: "cycledL", 66: "cycledH", 128: "full auto"}
+        fan_modes_full = {0: "off", 1: "manualL", 2: "manualH", 65: "cycledL", 66: "cycledH", 128: "full auto"}
+        fan_modes_fan_only = {0: "off", 1: "low", 2: "high"}
         hr_status = {}
         hr_status['SN'] = status['SN']
         hr_status['autoHeat_sp'] = info[0]
@@ -134,23 +135,37 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         hr_status['cool_sp'] = info[2]
         hr_status['heat_sp'] = info[3]
         hr_status['dry_sp'] = info[4]
-        hr_status['fan_mode_num'] = info[6]
-        hr_status['cool_mode_num'] = info[7]
+        hr_status['fan_mode_num'] = info[6]  # Fan setting in fan-only mode
+        hr_status['cool_fan_mode_num'] = info[7]  # Fan setting in cool mode
+        hr_status['auto_fan_mode_num'] = info[9]  # Fan setting in auto mode
         hr_status['mode_num'] = info[10]
-        hr_status['heat_mode_num'] = info[11]
+        hr_status['heat_fan_mode_num'] = info[11]  # Fan setting in heat mode
         hr_status['facePlateTemperature'] = info[12]
         hr_status['current_mode_num'] = info[15]
         hr_status['ALL'] = status
+
         if 7 in param:
             hr_status['off'] = True
         if 15 in param:
             hr_status['on'] = True
+
+        # Map modes
         if hr_status['current_mode_num'] in modes:
             hr_status['current_mode'] = modes[hr_status['current_mode_num']]
         if hr_status['mode_num'] in modes:
             hr_status['mode'] = modes[hr_status['mode_num']]
-        if hr_status['fan_mode_num'] in fan_modes:
-            hr_status['fan_mode'] = fan_modes[hr_status['fan_mode_num']]
+
+        # Map fan modes based on current mode
+        current_mode = hr_status.get('mode', "off")
+        if current_mode == "fan":
+            hr_status['fan_mode'] = fan_modes_fan_only.get(info[6], "off")
+        elif current_mode == "cool":
+            hr_status['cool_fan_mode'] = fan_modes_full.get(info[7], "full auto")
+        elif current_mode == "heat":
+            hr_status['heat_fan_mode'] = fan_modes_full.get(info[11], "full auto")
+        elif current_mode == "auto":
+            hr_status['auto_fan_mode'] = fan_modes_full.get(info[9], "full auto")
+
         return hr_status
 
     @retry_bluetooth_connection_error(attempts=7)
