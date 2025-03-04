@@ -192,7 +192,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
                     _LOGGER.error("Services not discovered")
                     return False
             password_bytes = password.encode('utf-8')
-            await self._client.write_gatt_char(UUIDS["strangeCmd"], password_bytes, response=True)
+            await self._client.write_gatt_char(UUIDS["passwordCmd"], password_bytes, response=True)
             _LOGGER.debug("Authentication sent successfully")
             return True
         except Exception as e:
@@ -201,58 +201,6 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
                 await self._client.disconnect()
             self._client = None
             return False
-
-    async def start_notifications(self, hass, ble_device: BLEDevice, callback_handler) -> None:
-        """Start subscribing to notifications from the device."""
-        if self._notification_task and not self._notification_task.done():
-            _LOGGER.debug("Notifications already active for %s", ble_device.address)
-            return
-
-        async def notification_handler(sender, data: bytes):
-            """Handle incoming notifications."""
-            _LOGGER.debug("Received raw notification data: %s", data.hex())
-            callback_handler(data)
-
-        async def run_notifications():
-            """Run notification subscription with reconnection logic."""
-            while True:
-                try:
-                    self._ble_device = ble_device
-                    if not self._client or not self._client.is_connected:
-                        self._client = await self._connect_to_device(ble_device)
-                        if not self._client or not self._client.is_connected:
-                            raise Exception("Failed to connect")
-                        if not await self.authenticate(self._password):
-                            raise Exception("Failed to authenticate")
-                    await self._client.start_notify(UUIDS["unknown"], notification_handler)
-                    _LOGGER.info("Subscribed to notifications on %s", ble_device.address)
-                    # Wait indefinitely until disconnected
-                    await asyncio.Future()
-                except Exception as e:
-                    _LOGGER.error("Notification subscription failed: %s. Reconnecting in 10s", str(e))
-                    if self._client and self._client.is_connected:
-                        await self._client.disconnect()
-                    self._client = None
-                    await asyncio.sleep(10)
-
-        self._notification_task = hass.loop.create_task(run_notifications())
-
-    async def stop_notifications(self, hass) -> None:
-        """Stop notification subscription."""
-        if self._notification_task and not self._notification_task.done():
-            self._notification_task.cancel()
-            try:
-                await self._notification_task
-            except asyncio.CancelledError:
-                _LOGGER.debug("Notification task cancelled")
-        if self._client and self._client.is_connected:
-            try:
-                await self._client.stop_notify(UUIDS["unknown"])
-                await self._client.disconnect()
-            except Exception as e:
-                _LOGGER.debug("Error stopping notifications: %s", str(e))
-            self._client = None
-        self._notification_task = None
 
     async def _write_gatt_with_retry(self, hass, uuid: str, data: bytes, ble_device: BLEDevice, retries: int = 3) -> bool:
         """Write GATT characteristic with retry and adaptive delay."""

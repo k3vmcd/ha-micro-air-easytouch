@@ -22,7 +22,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.components.bluetooth import async_ble_device_from_address
 
 from .const import DOMAIN
-from .micro_air_easytouch.parser import MicroAirEasyTouchBluetoothDeviceData  # Corrected import
+from .micro_air_easytouch.parser import MicroAirEasyTouchBluetoothDeviceData
 from .micro_air_easytouch.const import UUIDS
 
 _LOGGER = logging.getLogger(__name__)
@@ -57,7 +57,6 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][config_entry.entry_id]["data"]
     entity = MicroAirEasyTouchClimate(data, config_entry.unique_id)
     async_add_entities([entity])
-    await entity.async_start_notifications()
 
 class MicroAirEasyTouchClimate(ClimateEntity):
     """Representation of MicroAirEasyTouch Climate."""
@@ -91,46 +90,6 @@ class MicroAirEasyTouchClimate(ClimateEntity):
             model="Thermostat",
         )
         self._state = {}
-        self._notification_active = False
-
-    async def async_start_notifications(self) -> None:
-        """Start subscribing to notifications from the device."""
-        ble_device = async_ble_device_from_address(self.hass, self._mac_address)
-        if not ble_device:
-            _LOGGER.error("Could not find BLE device: %s", self._mac_address)
-            return
-
-        try:
-            await self._data.start_notifications(
-                self.hass,
-                ble_device,
-                self._handle_notification,
-            )
-            self._notification_active = True
-            await self._async_fetch_initial_state()
-            _LOGGER.debug("Notifications started for %s", self._mac_address)
-        except Exception as e:
-            _LOGGER.error("Failed to start notifications: %s", str(e))
-            self._notification_active = False
-
-    async def async_will_remove_from_hass(self) -> None:
-        """Cleanup when entity is removed."""
-        await self._data.stop_notifications(self.hass)
-        self._notification_active = False
-        await super().async_will_remove_from_hass()
-
-    @callback
-    def _handle_notification(self, data: bytes) -> None:
-        """Handle incoming notification data."""
-        try:
-            decrypted_data = self._data.decrypt(data.decode('utf-8'))
-            self._state = decrypted_data
-            _LOGGER.debug("Received notification update: %s", self._state)
-            self.async_write_ha_state()
-        except Exception as e:
-            _LOGGER.error("Error processing notification: %s", str(e))
-            self._state = {}
-            self.async_write_ha_state()
 
     async def _async_fetch_initial_state(self) -> None:
         """Fetch the initial state from the device."""
@@ -157,11 +116,6 @@ class MicroAirEasyTouchClimate(ClimateEntity):
         except Exception as e:
             _LOGGER.error("Failed to fetch initial state: %s", str(e))
             self._state = {}
-
-    @property
-    def available(self) -> bool:
-        """Return if entity is available."""
-        return self._notification_active and bool(self._state)
 
     @property
     def current_temperature(self) -> float | None:
