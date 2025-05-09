@@ -157,14 +157,24 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
 
         # Map fan modes based on current mode
         current_mode = hr_status.get('mode', "off")
+        
+        # Store the raw fan mode numbers and their string representations
         if current_mode == "fan":
-            hr_status['fan_mode'] = fan_modes_fan_only.get(info[6], "off")
+            fan_num = info[6]
+            hr_status['fan_mode_num'] = fan_num
+            hr_status['fan_mode'] = fan_modes_fan_only.get(fan_num, "off")
         elif current_mode == "cool":
-            hr_status['cool_fan_mode'] = fan_modes_full.get(info[7], "full auto")
+            fan_num = info[7]
+            hr_status['cool_fan_mode_num'] = fan_num
+            hr_status['cool_fan_mode'] = fan_modes_full.get(fan_num, "full auto")
         elif current_mode == "heat":
-            hr_status['heat_fan_mode'] = fan_modes_full.get(info[11], "full auto")
+            fan_num = info[11]
+            hr_status['heat_fan_mode_num'] = fan_num
+            hr_status['heat_fan_mode'] = fan_modes_full.get(fan_num, "full auto")
         elif current_mode == "auto":
-            hr_status['auto_fan_mode'] = fan_modes_full.get(info[9], "full auto")
+            fan_num = info[9]
+            hr_status['auto_fan_mode_num'] = fan_num
+            hr_status['auto_fan_mode'] = fan_modes_full.get(fan_num, "full auto")
 
         return hr_status
 
