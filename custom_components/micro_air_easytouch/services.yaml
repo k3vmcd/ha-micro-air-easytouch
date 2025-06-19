@@ -1,0 +1,33 @@
+set_location:
+  name: Set Location
+  description: Sets the latitude and longitude for a MicroAir EasyTouch Thermostat.
+  fields:
+    address:
+      name: MAC Address
+      description: The Bluetooth MAC address of the thermostat (e.g., 00:11:22:33:44:55).
+      required: true
+      example: "00:11:22:33:44:55"
+      selector:
+        text:
+    latitude:
+      name: Latitude
+      description: The latitude coordinate (between -90.0 and 90.0).
+      required: true
+      example: 40.7128
+      selector:
+        number:
+          min: -90.0
+          max: 90.0
+          step: 0.00001
+          mode: box
+    longitude:
+      name: Longitude
+      description: The longitude coordinate (between -180.0 and 180.0).
+      required: true
+      example: -74.0060
+      selector:
+        number:
+          min: -180.0
+          max: 180.0
+          step: 0.00001
+          mode: box
