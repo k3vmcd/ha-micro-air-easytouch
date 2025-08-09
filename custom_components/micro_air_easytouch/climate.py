@@ -129,12 +129,13 @@ class MicroAirEasyTouchClimate(ClimateEntity):
         self._mac_address = mac_address
         self._zone = zone
         self._attr_unique_id = f"microaireasytouch_{mac_address}_climate_zone_{zone}"
-        self._attr_name = f"EasyTouch Climate Zone {zone}"
+        self._attr_name = f"Zone {zone}"
         self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"MicroAirEasyTouch_{mac_address}")},
-            name=f"EasyTouch {mac_address}",
+            identifiers={(DOMAIN, f"MicroAirEasyTouch_{mac_address}_zone_{zone}")},
+            name=f"EasyTouch Zone {zone}",
             manufacturer="Micro-Air",
-            model="Thermostat",
+            model="EasyTouch Thermostat Zone",
+            via_device=(DOMAIN, f"MicroAirEasyTouch_{mac_address}"),
         )
         self._state = {}
 
@@ -361,4 +362,5 @@ class MicroAirEasyTouchClimate(ClimateEntity):
 
     async def async_update(self) -> None:
         """Update the entity state manually if needed."""
+        _LOGGER.debug("Updating state for zone %s", self._zone)
         await self._async_fetch_initial_state()

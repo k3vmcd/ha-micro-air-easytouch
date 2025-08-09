@@ -122,14 +122,23 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
 
     def decrypt(self, data: bytes) -> dict:
         """Parse and decode the device status data."""
-        status = json.loads(data)
-        param = status['PRM']
+        try:
+            status = json.loads(data)
+        except json.JSONDecodeError as e:
+            _LOGGER.error("Failed to parse JSON data: %s", str(e))
+            return {'available_zones': [0], 'zones': {0: {}}}
+            
+        if 'Z_sts' not in status:
+            _LOGGER.error("No zone status data found in device response")
+            return {'available_zones': [0], 'zones': {0: {}}}
+            
+        param = status.get('PRM', [])
         modes = {0: "off", 5: "heat_on", 4: "heat", 3: "cool_on", 2: "cool", 1: "fan", 11: "auto"}
         fan_modes_full = {0: "off", 1: "manualL", 2: "manualH", 65: "cycledL", 66: "cycledH", 128: "full auto"}
         fan_modes_fan_only = {0: "off", 1: "low", 2: "high"}
         
         hr_status = {}
-        hr_status['SN'] = status['SN']
+        hr_status['SN'] = status.get('SN', 'Unknown')
         hr_status['ALL'] = status
         
         # Detect available zones and process each one
@@ -137,60 +146,77 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         zone_data = {}
         
         for zone_key in status['Z_sts'].keys():
-            zone_num = int(zone_key)
-            available_zones.append(zone_num)
-            info = status['Z_sts'][zone_key]
-            
-            zone_status = {}
-            zone_status['autoHeat_sp'] = info[0]
-            zone_status['autoCool_sp'] = info[1]
-            zone_status['cool_sp'] = info[2]
-            zone_status['heat_sp'] = info[3]
-            zone_status['dry_sp'] = info[4]
-            zone_status['fan_mode_num'] = info[6]  # Fan setting in fan-only mode
-            zone_status['cool_fan_mode_num'] = info[7]  # Fan setting in cool mode
-            zone_status['auto_fan_mode_num'] = info[9]  # Fan setting in auto mode
-            zone_status['mode_num'] = info[10]
-            zone_status['heat_fan_mode_num'] = info[11]  # Fan setting in heat mode
-            zone_status['facePlateTemperature'] = info[12]
-            zone_status['current_mode_num'] = info[15]
+            try:
+                zone_num = int(zone_key)
+                info = status['Z_sts'][zone_key]
+                
+                # Ensure info has enough elements
+                if len(info) < 16:
+                    _LOGGER.warning("Zone %s has incomplete data (%d elements), skipping", zone_num, len(info))
+                    continue
+                
+                # Only add to available_zones after validation passes
+                available_zones.append(zone_num)
+                
+                zone_status = {}
+                zone_status['autoHeat_sp'] = info[0]
+                zone_status['autoCool_sp'] = info[1]
+                zone_status['cool_sp'] = info[2]
+                zone_status['heat_sp'] = info[3]
+                zone_status['dry_sp'] = info[4]
+                zone_status['fan_mode_num'] = info[6]  # Fan setting in fan-only mode
+                zone_status['cool_fan_mode_num'] = info[7]  # Fan setting in cool mode
+                zone_status['auto_fan_mode_num'] = info[9]  # Fan setting in auto mode
+                zone_status['mode_num'] = info[10]
+                zone_status['heat_fan_mode_num'] = info[11]  # Fan setting in heat mode
+                zone_status['facePlateTemperature'] = info[12]
+                zone_status['current_mode_num'] = info[15]
 
-            if 7 in param:
-                zone_status['off'] = True
-            if 15 in param:
-                zone_status['on'] = True
+                if 7 in param:
+                    zone_status['off'] = True
+                if 15 in param:
+                    zone_status['on'] = True
 
-            # Map modes
-            if zone_status['current_mode_num'] in modes:
-                zone_status['current_mode'] = modes[zone_status['current_mode_num']]
-            if zone_status['mode_num'] in modes:
-                zone_status['mode'] = modes[zone_status['mode_num']]
+                # Map modes
+                if zone_status['current_mode_num'] in modes:
+                    zone_status['current_mode'] = modes[zone_status['current_mode_num']]
+                if zone_status['mode_num'] in modes:
+                    zone_status['mode'] = modes[zone_status['mode_num']]
 
-            # Map fan modes based on current mode
-            current_mode = zone_status.get('mode', "off")
-            
-            # Store the raw fan mode numbers and their string representations
-            if current_mode == "fan":
-                fan_num = info[6]
-                zone_status['fan_mode_num'] = fan_num
-                zone_status['fan_mode'] = fan_modes_fan_only.get(fan_num, "off")
-            elif current_mode == "cool":
-                fan_num = info[7]
-                zone_status['cool_fan_mode_num'] = fan_num
-                zone_status['cool_fan_mode'] = fan_modes_full.get(fan_num, "full auto")
-            elif current_mode == "heat":
-                fan_num = info[11]
-                zone_status['heat_fan_mode_num'] = fan_num
-                zone_status['heat_fan_mode'] = fan_modes_full.get(fan_num, "full auto")
-            elif current_mode == "auto":
-                fan_num = info[9]
-                zone_status['auto_fan_mode_num'] = fan_num
-                zone_status['auto_fan_mode'] = fan_modes_full.get(fan_num, "full auto")
+                # Map fan modes based on current mode
+                current_mode = zone_status.get('mode', "off")
+                
+                # Store the raw fan mode numbers and their string representations
+                if current_mode == "fan":
+                    fan_num = info[6]
+                    zone_status['fan_mode_num'] = fan_num
+                    zone_status['fan_mode'] = fan_modes_fan_only.get(fan_num, "off")
+                elif current_mode == "cool":
+                    fan_num = info[7]
+                    zone_status['cool_fan_mode_num'] = fan_num
+                    zone_status['cool_fan_mode'] = fan_modes_full.get(fan_num, "full auto")
+                elif current_mode == "heat":
+                    fan_num = info[11]
+                    zone_status['heat_fan_mode_num'] = fan_num
+                    zone_status['heat_fan_mode'] = fan_modes_full.get(fan_num, "full auto")
+                elif current_mode == "auto":
+                    fan_num = info[9]
+                    zone_status['auto_fan_mode_num'] = fan_num
+                    zone_status['auto_fan_mode'] = fan_modes_full.get(fan_num, "full auto")
 
-            zone_data[zone_num] = zone_status
+                zone_data[zone_num] = zone_status
+            except (ValueError, IndexError, KeyError) as e:
+                _LOGGER.error("Error processing zone %s: %s", zone_key, str(e))
+                continue
 
         hr_status['zones'] = zone_data
         hr_status['available_zones'] = sorted(available_zones)
+        
+        # Ensure we have at least one zone
+        if not available_zones:
+            _LOGGER.warning("No valid zones found, creating default zone 0")
+            hr_status['available_zones'] = [0]
+            hr_status['zones'] = {0: {}}
         
         # For backward compatibility, if zone 0 exists, copy its data to the root level
         if 0 in zone_data:
@@ -365,7 +391,10 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
                 json_payload = await self._read_gatt_with_retry(hass, UUIDS["jsonReturn"], ble_device)
                 if json_payload:
                     decrypted_data = self.decrypt(json_payload.decode('utf-8'))
-                    return decrypted_data.get('available_zones', [0])
+                    zones = decrypted_data.get('available_zones', [0])
+                    _LOGGER.info("Detected %d zones: %s", len(zones), zones)
+                    return zones
+            _LOGGER.warning("Failed to get zone status from device, defaulting to zone 0")
             return [0]  # Default to zone 0 if detection fails
         except Exception as e:
             _LOGGER.error("Failed to get available zones: %s", str(e))
