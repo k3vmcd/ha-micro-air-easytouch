@@ -123,58 +123,78 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
     def decrypt(self, data: bytes) -> dict:
         """Parse and decode the device status data."""
         status = json.loads(data)
-        info = status['Z_sts']['0']
         param = status['PRM']
         modes = {0: "off", 5: "heat_on", 4: "heat", 3: "cool_on", 2: "cool", 1: "fan", 11: "auto"}
         fan_modes_full = {0: "off", 1: "manualL", 2: "manualH", 65: "cycledL", 66: "cycledH", 128: "full auto"}
         fan_modes_fan_only = {0: "off", 1: "low", 2: "high"}
+        
         hr_status = {}
         hr_status['SN'] = status['SN']
-        hr_status['autoHeat_sp'] = info[0]
-        hr_status['autoCool_sp'] = info[1]
-        hr_status['cool_sp'] = info[2]
-        hr_status['heat_sp'] = info[3]
-        hr_status['dry_sp'] = info[4]
-        hr_status['fan_mode_num'] = info[6]  # Fan setting in fan-only mode
-        hr_status['cool_fan_mode_num'] = info[7]  # Fan setting in cool mode
-        hr_status['auto_fan_mode_num'] = info[9]  # Fan setting in auto mode
-        hr_status['mode_num'] = info[10]
-        hr_status['heat_fan_mode_num'] = info[11]  # Fan setting in heat mode
-        hr_status['facePlateTemperature'] = info[12]
-        hr_status['current_mode_num'] = info[15]
         hr_status['ALL'] = status
-
-        if 7 in param:
-            hr_status['off'] = True
-        if 15 in param:
-            hr_status['on'] = True
-
-        # Map modes
-        if hr_status['current_mode_num'] in modes:
-            hr_status['current_mode'] = modes[hr_status['current_mode_num']]
-        if hr_status['mode_num'] in modes:
-            hr_status['mode'] = modes[hr_status['mode_num']]
-
-        # Map fan modes based on current mode
-        current_mode = hr_status.get('mode', "off")
         
-        # Store the raw fan mode numbers and their string representations
-        if current_mode == "fan":
-            fan_num = info[6]
-            hr_status['fan_mode_num'] = fan_num
-            hr_status['fan_mode'] = fan_modes_fan_only.get(fan_num, "off")
-        elif current_mode == "cool":
-            fan_num = info[7]
-            hr_status['cool_fan_mode_num'] = fan_num
-            hr_status['cool_fan_mode'] = fan_modes_full.get(fan_num, "full auto")
-        elif current_mode == "heat":
-            fan_num = info[11]
-            hr_status['heat_fan_mode_num'] = fan_num
-            hr_status['heat_fan_mode'] = fan_modes_full.get(fan_num, "full auto")
-        elif current_mode == "auto":
-            fan_num = info[9]
-            hr_status['auto_fan_mode_num'] = fan_num
-            hr_status['auto_fan_mode'] = fan_modes_full.get(fan_num, "full auto")
+        # Detect available zones and process each one
+        available_zones = []
+        zone_data = {}
+        
+        for zone_key in status['Z_sts'].keys():
+            zone_num = int(zone_key)
+            available_zones.append(zone_num)
+            info = status['Z_sts'][zone_key]
+            
+            zone_status = {}
+            zone_status['autoHeat_sp'] = info[0]
+            zone_status['autoCool_sp'] = info[1]
+            zone_status['cool_sp'] = info[2]
+            zone_status['heat_sp'] = info[3]
+            zone_status['dry_sp'] = info[4]
+            zone_status['fan_mode_num'] = info[6]  # Fan setting in fan-only mode
+            zone_status['cool_fan_mode_num'] = info[7]  # Fan setting in cool mode
+            zone_status['auto_fan_mode_num'] = info[9]  # Fan setting in auto mode
+            zone_status['mode_num'] = info[10]
+            zone_status['heat_fan_mode_num'] = info[11]  # Fan setting in heat mode
+            zone_status['facePlateTemperature'] = info[12]
+            zone_status['current_mode_num'] = info[15]
+
+            if 7 in param:
+                zone_status['off'] = True
+            if 15 in param:
+                zone_status['on'] = True
+
+            # Map modes
+            if zone_status['current_mode_num'] in modes:
+                zone_status['current_mode'] = modes[zone_status['current_mode_num']]
+            if zone_status['mode_num'] in modes:
+                zone_status['mode'] = modes[zone_status['mode_num']]
+
+            # Map fan modes based on current mode
+            current_mode = zone_status.get('mode', "off")
+            
+            # Store the raw fan mode numbers and their string representations
+            if current_mode == "fan":
+                fan_num = info[6]
+                zone_status['fan_mode_num'] = fan_num
+                zone_status['fan_mode'] = fan_modes_fan_only.get(fan_num, "off")
+            elif current_mode == "cool":
+                fan_num = info[7]
+                zone_status['cool_fan_mode_num'] = fan_num
+                zone_status['cool_fan_mode'] = fan_modes_full.get(fan_num, "full auto")
+            elif current_mode == "heat":
+                fan_num = info[11]
+                zone_status['heat_fan_mode_num'] = fan_num
+                zone_status['heat_fan_mode'] = fan_modes_full.get(fan_num, "full auto")
+            elif current_mode == "auto":
+                fan_num = info[9]
+                zone_status['auto_fan_mode_num'] = fan_num
+                zone_status['auto_fan_mode'] = fan_modes_full.get(fan_num, "full auto")
+
+            zone_data[zone_num] = zone_status
+
+        hr_status['zones'] = zone_data
+        hr_status['available_zones'] = sorted(available_zones)
+        
+        # For backward compatibility, if zone 0 exists, copy its data to the root level
+        if 0 in zone_data:
+            hr_status.update(zone_data[0])
 
         return hr_status
 
@@ -337,6 +357,20 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             self._client = None
             self._ble_device = None
 
+    async def get_available_zones(self, hass, ble_device: BLEDevice) -> list[int]:
+        """Get available zones from the device by querying its status."""
+        try:
+            message = {"Type": "Get Status", "Zone": 0, "EM": self._email, "TM": int(time.time())}
+            if await self.send_command(hass, ble_device, message):
+                json_payload = await self._read_gatt_with_retry(hass, UUIDS["jsonReturn"], ble_device)
+                if json_payload:
+                    decrypted_data = self.decrypt(json_payload.decode('utf-8'))
+                    return decrypted_data.get('available_zones', [0])
+            return [0]  # Default to zone 0 if detection fails
+        except Exception as e:
+            _LOGGER.error("Failed to get available zones: %s", str(e))
+            return [0]  # Default to zone 0 if detection fails
+            
     async def send_command(self, hass, ble_device: BLEDevice, command: dict) -> bool:
         """Send command to device."""
         try:

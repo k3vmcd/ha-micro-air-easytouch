@@ -56,7 +56,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
         # Construct the command
         command = {
             "Type": "Get Status",
-            "Zone": 0,
+            "Zone": 0,  # Location setting is global, not zone-specific
             "LAT": f"{latitude:.5f}",
             "LON": f"{longitude:.5f}",
             "TM": int(time.time())
