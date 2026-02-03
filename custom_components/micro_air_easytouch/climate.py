@@ -21,6 +21,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.components.bluetooth import async_ble_device_from_address
+from homeassistant.exceptions import HomeAssistantError
 
 from .const import DOMAIN
 from .micro_air_easytouch.parser import MicroAirEasyTouchBluetoothDeviceData
@@ -129,12 +130,11 @@ class MicroAirEasyTouchClimate(ClimateEntity):
         """Return the icon to use for the current fan mode."""
         return self._FAN_MODE_ICONS.get(self.fan_mode, "mdi:fan")
 
-    async def _async_fetch_initial_state(self) -> None:
-        """Fetch the initial state from the device."""
+    async def _async_fetch_state(self) -> None:
+        """Fetch the current state from the device."""
         ble_device = async_ble_device_from_address(self.hass, self._mac_address)
         if not ble_device:
             _LOGGER.error("Could not find BLE device: %s", self._mac_address)
-            self._state = {}
             return
 
         message = {"Type": "Get Status", "Zone": 0, "EM": self._data._email, "TM": int(time.time())}
@@ -142,18 +142,18 @@ class MicroAirEasyTouchClimate(ClimateEntity):
             if await self._data.send_command(self.hass, ble_device, message):
                 json_payload = await self._data._read_gatt_with_retry(self.hass, UUIDS["jsonReturn"], ble_device)
                 if json_payload:
-                    self._state = self._data.decrypt(json_payload.decode('utf-8'))
-                    _LOGGER.debug("Initial state fetched: %s", self._state)
-                    self.async_write_ha_state()
+                    new_state = self._data.decrypt(json_payload.decode('utf-8'))
+                    # Preserve existing state if fetch returns empty/partial data
+                    if new_state:
+                        self._state = new_state
+                        _LOGGER.debug("State fetched: %s", self._state)
+                        self.async_write_ha_state()
                 else:
-                    self._state = {}
-                    _LOGGER.warning("No payload received for initial state")
+                    _LOGGER.warning("No payload received for state fetch")
             else:
-                self._state = {}
-                _LOGGER.warning("Failed to send command for initial state")
+                _LOGGER.warning("Failed to send command for state fetch")
         except Exception as e:
-            _LOGGER.error("Failed to fetch initial state: %s", str(e))
-            self._state = {}
+            _LOGGER.error("Failed to fetch state: %s", str(e))
 
     @property
     def current_temperature(self) -> float | None:
@@ -248,35 +248,53 @@ class MicroAirEasyTouchClimate(ClimateEntity):
         """Set new target temperature."""
         ble_device = async_ble_device_from_address(self.hass, self._mac_address)
         if not ble_device:
-            _LOGGER.error("Could not find BLE device")
-            return
+            raise HomeAssistantError("Could not find BLE device")
 
         changes = {"zone": 0, "power": 1}
         if ATTR_TEMPERATURE in kwargs:
             temp = int(kwargs[ATTR_TEMPERATURE])
             if self.hvac_mode == HVACMode.COOL:
                 changes["cool_sp"] = temp
+                # Optimistic update
+                self._state["cool_sp"] = temp
             elif self.hvac_mode == HVACMode.HEAT:
                 changes["heat_sp"] = temp
+                # Optimistic update
+                self._state["heat_sp"] = temp
             elif self.hvac_mode == HVACMode.DRY:
                 changes["dry_sp"] = temp
+                # Optimistic update
+                self._state["dry_sp"] = temp
         elif "target_temp_high" in kwargs and "target_temp_low" in kwargs:
             changes["autoCool_sp"] = int(kwargs["target_temp_high"])
             changes["autoHeat_sp"] = int(kwargs["target_temp_low"])
+            # Optimistic update
+            self._state["autoCool_sp"] = int(kwargs["target_temp_high"])
+            self._state["autoHeat_sp"] = int(kwargs["target_temp_low"])
 
         if changes:
+            # Optimistic update - show new state immediately
+            self.async_write_ha_state()
+            
             message = {"Type": "Change", "Changes": changes}
-            await self._data.send_command(self.hass, ble_device, message)
+            if not await self._data.send_command(self.hass, ble_device, message):
+                raise HomeAssistantError("Failed to set temperature")
+            
+            # Refresh state from device to confirm
+            await self._async_fetch_state()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set new target hvac mode."""
         ble_device = async_ble_device_from_address(self.hass, self._mac_address)
         if not ble_device:
-            _LOGGER.error("Could not find BLE device")
-            return
+            raise HomeAssistantError("Could not find BLE device")
 
         mode = HA_MODE_TO_EASY_MODE.get(hvac_mode)
         if mode is not None:
+            # Optimistic update
+            self._state["mode_num"] = mode
+            self.async_write_ha_state()
+            
             message = {
                 "Type": "Change",
                 "Changes": {
@@ -285,14 +303,17 @@ class MicroAirEasyTouchClimate(ClimateEntity):
                     "mode": mode,
                 },
             }
-            await self._data.send_command(self.hass, ble_device, message)
+            if not await self._data.send_command(self.hass, ble_device, message):
+                raise HomeAssistantError(f"Failed to set HVAC mode to {hvac_mode}")
+            
+            # Refresh state from device to confirm
+            await self._async_fetch_state()
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
         """Set new target fan mode using standard Home Assistant names."""
         ble_device = async_ble_device_from_address(self.hass, self._mac_address)
         if not ble_device:
-            _LOGGER.error("Could not find BLE device")
-            return
+            raise HomeAssistantError("Could not find BLE device")
 
         # Map standard name to device value
         if self.hvac_mode == HVACMode.FAN_ONLY:
@@ -304,8 +325,13 @@ class MicroAirEasyTouchClimate(ClimateEntity):
                 fan_value = 2
             else:
                 fan_value = 0
+            # Optimistic update
+            self._state["fan_mode_num"] = fan_value
+            self.async_write_ha_state()
+            
             message = {"Type": "Change", "Changes": {"zone": 0, "fanOnly": fan_value}}
-            await self._data.send_command(self.hass, ble_device, message)
+            if not await self._data.send_command(self.hass, ble_device, message):
+                raise HomeAssistantError(f"Failed to set fan mode to {fan_mode}")
         else:
             if fan_mode == "off":
                 fan_value = 0
@@ -320,13 +346,26 @@ class MicroAirEasyTouchClimate(ClimateEntity):
             changes = {"zone": 0}
             if self.hvac_mode == HVACMode.COOL:
                 changes["coolFan"] = fan_value
+                # Optimistic update
+                self._state["cool_fan_mode_num"] = fan_value
             elif self.hvac_mode == HVACMode.HEAT:
                 changes["heatFan"] = fan_value
+                # Optimistic update
+                self._state["heat_fan_mode_num"] = fan_value
             elif self.hvac_mode == HVACMode.AUTO:
                 changes["autoFan"] = fan_value
+                # Optimistic update
+                self._state["auto_fan_mode_num"] = fan_value
+            
+            self.async_write_ha_state()
+            
             message = {"Type": "Change", "Changes": changes}
-            await self._data.send_command(self.hass, ble_device, message)
+            if not await self._data.send_command(self.hass, ble_device, message):
+                raise HomeAssistantError(f"Failed to set fan mode to {fan_mode}")
+        
+        # Refresh state from device to confirm
+        await self._async_fetch_state()
 
     async def async_update(self) -> None:
-        """Update the entity state manually if needed."""
-        await self._async_fetch_initial_state()
+        """Update the entity state from device."""
+        await self._async_fetch_state()
