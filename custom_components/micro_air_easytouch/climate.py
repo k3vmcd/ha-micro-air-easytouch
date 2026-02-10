@@ -193,12 +193,14 @@ class MicroAirEasyTouchClimate(ClimateEntity):
         if self._state.get("off") and not self._state.get("on"):
             return HVACMode.OFF
         # current_mode_num (info[15]) reflects the actual operating state
+        # including active states: 3=cool_on, 5=heat_on
         # mode_num (info[10]) only reflects the last configured mode, not power state
         current_mode_num = self._state.get("current_mode_num")
         if current_mode_num == 0 and self._state.get("off"):
             return HVACMode.OFF
-        mode_num = self._state.get("mode_num", 0)
-        return EASY_MODE_TO_HA_MODE.get(mode_num, HVACMode.OFF)
+        if current_mode_num is not None:
+            return EASY_MODE_TO_HA_MODE.get(current_mode_num, HVACMode.OFF)
+        return HVACMode.OFF
 
     @property
     def hvac_action(self) -> HVACAction | None:
