@@ -188,6 +188,15 @@ class MicroAirEasyTouchClimate(ClimateEntity):
     @property
     def hvac_mode(self) -> HVACMode:
         """Return hvac operation mode."""
+        # Check if the device is actually powered off via PRM flags
+        # PRM contains 7 when off, 15 when on
+        if self._state.get("off") and not self._state.get("on"):
+            return HVACMode.OFF
+        # current_mode_num (info[15]) reflects the actual operating state
+        # mode_num (info[10]) only reflects the last configured mode, not power state
+        current_mode_num = self._state.get("current_mode_num")
+        if current_mode_num == 0 and self._state.get("off"):
+            return HVACMode.OFF
         mode_num = self._state.get("mode_num", 0)
         return EASY_MODE_TO_HA_MODE.get(mode_num, HVACMode.OFF)
 
