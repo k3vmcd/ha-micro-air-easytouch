@@ -330,54 +330,52 @@ class MicroAirEasyTouchClimate(ClimateEntity):
         if not ble_device:
             raise HomeAssistantError("Could not find BLE device")
 
-        try:
-            # Map standard name to device value
-            if self.hvac_mode == HVACMode.FAN_ONLY:
-                if fan_mode == "off":
-                    fan_value = 0
-                elif fan_mode == "low":
-                    fan_value = 1
-                elif fan_mode == "high":
-                    fan_value = 2
-                else:
-                    fan_value = 0
-                # Optimistic update
-                self._state["fan_mode_num"] = fan_value
-                self.async_write_ha_state()
-                
-                message = {"Type": "Change", "Changes": {"zone": 0, "fanOnly": fan_value}}
-                if not await self._data.send_command(self.hass, ble_device, message):
-                    raise HomeAssistantError(f"Failed to set fan mode to {fan_mode}")
+        # Map standard name to device value and build changes
+        if self.hvac_mode == HVACMode.FAN_ONLY:
+            if fan_mode == "off":
+                fan_value = 0
+            elif fan_mode == "low":
+                fan_value = 1
+            elif fan_mode == "high":
+                fan_value = 2
             else:
-                if fan_mode == "off":
-                    fan_value = 0
-                elif fan_mode == "low":
-                    fan_value = 1  # manualL
-                elif fan_mode == "high":
-                    fan_value = 2  # manualH
-                elif fan_mode == "auto":
-                    fan_value = 128  # full auto
-                else:
-                    fan_value = 128
-                changes = {"zone": 0}
-                if self.hvac_mode == HVACMode.COOL:
-                    changes["coolFan"] = fan_value
-                    # Optimistic update
-                    self._state["cool_fan_mode_num"] = fan_value
-                elif self.hvac_mode == HVACMode.HEAT:
-                    changes["heatFan"] = fan_value
-                    # Optimistic update
-                    self._state["heat_fan_mode_num"] = fan_value
-                elif self.hvac_mode == HVACMode.AUTO:
-                    changes["autoFan"] = fan_value
-                    # Optimistic update
-                    self._state["auto_fan_mode_num"] = fan_value
-                
-                self.async_write_ha_state()
-                
-                message = {"Type": "Change", "Changes": changes}
-                if not await self._data.send_command(self.hass, ble_device, message):
-                    raise HomeAssistantError(f"Failed to set fan mode to {fan_mode}")
+                fan_value = 0
+            changes = {"zone": 0, "fanOnly": fan_value}
+            self._state["fan_mode_num"] = fan_value
+        else:
+            if fan_mode == "off":
+                fan_value = 0
+            elif fan_mode == "low":
+                fan_value = 1  # manualL
+            elif fan_mode == "high":
+                fan_value = 2  # manualH
+            elif fan_mode == "auto":
+                fan_value = 128  # full auto
+            else:
+                fan_value = 128
+            changes = {}
+            if self.hvac_mode == HVACMode.COOL:
+                changes["coolFan"] = fan_value
+                self._state["cool_fan_mode_num"] = fan_value
+            elif self.hvac_mode == HVACMode.HEAT:
+                changes["heatFan"] = fan_value
+                self._state["heat_fan_mode_num"] = fan_value
+            elif self.hvac_mode == HVACMode.AUTO:
+                changes["autoFan"] = fan_value
+                self._state["auto_fan_mode_num"] = fan_value
+
+            if not changes:
+                # OFF or DRY mode - no fan key to set, skip BLE round-trip
+                return
+
+            changes["zone"] = 0
+
+        self.async_write_ha_state()
+
+        message = {"Type": "Change", "Changes": changes}
+        try:
+            if not await self._data.send_command(self.hass, ble_device, message):
+                raise HomeAssistantError(f"Failed to set fan mode to {fan_mode}")
         finally:
             # Always refresh state from device to correct optimistic update
             await self._async_fetch_state()
