@@ -259,39 +259,41 @@ class MicroAirEasyTouchClimate(ClimateEntity):
         if not ble_device:
             raise HomeAssistantError("Could not find BLE device")
 
-        changes = {"zone": 0, "power": 1}
+        changes = {}
         if ATTR_TEMPERATURE in kwargs:
             temp = int(kwargs[ATTR_TEMPERATURE])
             if self.hvac_mode == HVACMode.COOL:
                 changes["cool_sp"] = temp
-                # Optimistic update
                 self._state["cool_sp"] = temp
             elif self.hvac_mode == HVACMode.HEAT:
                 changes["heat_sp"] = temp
-                # Optimistic update
                 self._state["heat_sp"] = temp
             elif self.hvac_mode == HVACMode.DRY:
                 changes["dry_sp"] = temp
-                # Optimistic update
                 self._state["dry_sp"] = temp
         elif "target_temp_high" in kwargs and "target_temp_low" in kwargs:
             changes["autoCool_sp"] = int(kwargs["target_temp_high"])
             changes["autoHeat_sp"] = int(kwargs["target_temp_low"])
-            # Optimistic update
             self._state["autoCool_sp"] = int(kwargs["target_temp_high"])
             self._state["autoHeat_sp"] = int(kwargs["target_temp_low"])
 
-        if changes:
-            # Optimistic update - show new state immediately
-            self.async_write_ha_state()
-            
-            message = {"Type": "Change", "Changes": changes}
-            try:
-                if not await self._data.send_command(self.hass, ble_device, message):
-                    raise HomeAssistantError("Failed to set temperature")
-            finally:
-                # Always refresh state from device to correct optimistic update
-                await self._async_fetch_state()
+        if not changes:
+            return
+
+        # Add required fields only when we have actual temperature changes
+        changes["zone"] = 0
+        changes["power"] = 1
+
+        # Optimistic update - show new state immediately
+        self.async_write_ha_state()
+
+        message = {"Type": "Change", "Changes": changes}
+        try:
+            if not await self._data.send_command(self.hass, ble_device, message):
+                raise HomeAssistantError("Failed to set temperature")
+        finally:
+            # Always refresh state from device to correct optimistic update
+            await self._async_fetch_state()
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set new target hvac mode."""
