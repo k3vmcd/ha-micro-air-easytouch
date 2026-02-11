@@ -305,8 +305,14 @@ class MicroAirEasyTouchClimate(ClimateEntity):
 
         mode = HA_MODE_TO_EASY_MODE.get(hvac_mode)
         if mode is not None:
-            # Optimistic update
-            self._state["mode_num"] = mode
+            # Optimistic update — write to the keys hvac_mode actually reads
+            self._state["current_mode_num"] = mode
+            if hvac_mode == HVACMode.OFF:
+                self._state["off"] = True
+                self._state.pop("on", None)
+            else:
+                self._state["on"] = True
+                self._state.pop("off", None)
             self.async_write_ha_state()
             
             message = {
