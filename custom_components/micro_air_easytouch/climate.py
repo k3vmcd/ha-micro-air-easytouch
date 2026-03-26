@@ -112,6 +112,7 @@ class MicroAirEasyTouchClimate(ClimateEntity):
             model="Thermostat",
         )
         self._state = {}
+        self._last_known_hvac_mode: HVACMode | None = None
 
     @property
     def icon(self) -> str:
@@ -146,6 +147,13 @@ class MicroAirEasyTouchClimate(ClimateEntity):
                     # Preserve existing state if fetch returns empty/partial data
                     if new_state:
                         self._state = new_state
+                        # Track last active mode so transient OFF readings don't
+                        # lose the real state (used as fallback in hvac_mode).
+                        mode_num = new_state.get("current_mode_num")
+                        if mode_num is not None and mode_num != 0:
+                            self._last_known_hvac_mode = EASY_MODE_TO_HA_MODE.get(
+                                mode_num, self._last_known_hvac_mode
+                            )
                         _LOGGER.debug("State fetched: %s", self._state)
                         self.async_write_ha_state()
                 else:
@@ -188,18 +196,22 @@ class MicroAirEasyTouchClimate(ClimateEntity):
     @property
     def hvac_mode(self) -> HVACMode:
         """Return hvac operation mode."""
-        # Check if the device is actually powered off via PRM flags
-        # PRM contains 7 when off, 15 when on
+        # current_mode_num (info[15]) is the authoritative live operating mode —
+        # 0 means off, non-zero means running in that mode (3=cool_on, 5=heat_on, …).
+        # Check it first so that a transient PRM "off" flag (value 7 in param) during
+        # a BLE connection/transition does not override a running mode.
+        current_mode_num = self._state.get("current_mode_num")
+        if current_mode_num is not None:
+            if current_mode_num == 0:
+                return HVACMode.OFF
+            return EASY_MODE_TO_HA_MODE.get(current_mode_num, HVACMode.OFF)
+
+        # No current_mode_num yet (state not populated before first poll).
+        # Fall back to PRM flags, then last known mode.
         if self._state.get("off") and not self._state.get("on"):
             return HVACMode.OFF
-        # current_mode_num (info[15]) reflects the actual operating state
-        # including active states: 3=cool_on, 5=heat_on
-        # mode_num (info[10]) only reflects the last configured mode, not power state
-        current_mode_num = self._state.get("current_mode_num")
-        if current_mode_num == 0 and self._state.get("off"):
-            return HVACMode.OFF
-        if current_mode_num is not None:
-            return EASY_MODE_TO_HA_MODE.get(current_mode_num, HVACMode.OFF)
+        if self._last_known_hvac_mode is not None:
+            return self._last_known_hvac_mode
         return HVACMode.OFF
 
     @property
