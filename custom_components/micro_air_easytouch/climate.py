@@ -16,12 +16,14 @@ from homeassistant.const import (
     ATTR_TEMPERATURE,
     UnitOfTemperature,
 )
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.components.bluetooth import async_ble_device_from_address
 from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.restore_state import RestoreEntity
 
 from .const import DOMAIN
 from .micro_air_easytouch.parser import MicroAirEasyTouchBluetoothDeviceData
@@ -46,7 +48,7 @@ async def async_setup_entry(
     entity = MicroAirEasyTouchClimate(data, config_entry.unique_id)
     async_add_entities([entity])
 
-class MicroAirEasyTouchClimate(ClimateEntity):
+class MicroAirEasyTouchClimate(ClimateEntity, RestoreEntity):
     """Representation of MicroAirEasyTouch Climate."""
 
     _attr_has_entity_name = True
@@ -113,6 +115,39 @@ class MicroAirEasyTouchClimate(ClimateEntity):
         )
         self._state = {}
         self._last_known_hvac_mode: HVACMode | None = None
+
+    async def async_added_to_hass(self) -> None:
+        """Restore last known state on startup so we don't flash 'Off'."""
+        await super().async_added_to_hass()
+        last_state = await self.async_get_last_state()
+        if last_state and last_state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN, None):
+            try:
+                restored_mode = HVACMode(last_state.state)
+                self._last_known_hvac_mode = restored_mode
+                # Seed _state so temperature and setpoints also survive a restart
+                attrs = last_state.attributes
+                seed = {}
+                for key in (
+                    "current_temperature",
+                    "temperature",
+                    "target_temp_high",
+                    "target_temp_low",
+                ):
+                    if attrs.get(key) is not None:
+                        seed[key] = attrs[key]
+                # Map HA attribute names back to internal keys
+                if "current_temperature" in seed:
+                    self._state["facePlateTemperature"] = seed["current_temperature"]
+                if "temperature" in seed:
+                    if restored_mode == HVACMode.COOL:
+                        self._state["cool_sp"] = seed["temperature"]
+                    elif restored_mode == HVACMode.HEAT:
+                        self._state["heat_sp"] = seed["temperature"]
+                if restored_mode != HVACMode.OFF:
+                    self._state["current_mode_num"] = HA_MODE_TO_EASY_MODE.get(restored_mode, 0)
+                _LOGGER.debug("Restored last known state: mode=%s", restored_mode)
+            except (ValueError, KeyError):
+                pass
 
     @property
     def icon(self) -> str:
