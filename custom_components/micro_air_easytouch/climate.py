@@ -117,35 +117,15 @@ class MicroAirEasyTouchClimate(ClimateEntity, RestoreEntity):
         self._last_known_hvac_mode: HVACMode | None = None
 
     async def async_added_to_hass(self) -> None:
-        """Restore last known state on startup so we don't flash 'Off'."""
+        """Restore last known active mode on startup so we don't flash 'Off'."""
         await super().async_added_to_hass()
         last_state = await self.async_get_last_state()
         if last_state and last_state.state not in (STATE_UNAVAILABLE, STATE_UNKNOWN, None):
             try:
                 restored_mode = HVACMode(last_state.state)
-                self._last_known_hvac_mode = restored_mode
-                # Seed _state so temperature and setpoints also survive a restart
-                attrs = last_state.attributes
-                seed = {}
-                for key in (
-                    "current_temperature",
-                    "temperature",
-                    "target_temp_high",
-                    "target_temp_low",
-                ):
-                    if attrs.get(key) is not None:
-                        seed[key] = attrs[key]
-                # Map HA attribute names back to internal keys
-                if "current_temperature" in seed:
-                    self._state["facePlateTemperature"] = seed["current_temperature"]
-                if "temperature" in seed:
-                    if restored_mode == HVACMode.COOL:
-                        self._state["cool_sp"] = seed["temperature"]
-                    elif restored_mode == HVACMode.HEAT:
-                        self._state["heat_sp"] = seed["temperature"]
                 if restored_mode != HVACMode.OFF:
-                    self._state["current_mode_num"] = HA_MODE_TO_EASY_MODE.get(restored_mode, 0)
-                _LOGGER.debug("Restored last known state: mode=%s", restored_mode)
+                    self._last_known_hvac_mode = restored_mode
+                    _LOGGER.debug("Restored last known hvac mode: %s", restored_mode)
             except (ValueError, KeyError):
                 pass
 
@@ -231,20 +211,17 @@ class MicroAirEasyTouchClimate(ClimateEntity, RestoreEntity):
     @property
     def hvac_mode(self) -> HVACMode:
         """Return hvac operation mode."""
-        # current_mode_num (info[15]) is the authoritative live operating mode —
-        # 0 means off, non-zero means running in that mode (3=cool_on, 5=heat_on, …).
-        # Check it first so that a transient PRM "off" flag (value 7 in param) during
-        # a BLE connection/transition does not override a running mode.
-        current_mode_num = self._state.get("current_mode_num")
-        if current_mode_num is not None:
-            if current_mode_num == 0:
-                return HVACMode.OFF
-            return EASY_MODE_TO_HA_MODE.get(current_mode_num, HVACMode.OFF)
-
-        # No current_mode_num yet (state not populated before first poll).
-        # Fall back to PRM flags, then last known mode.
+        # PRM flags are the authoritative power state: 7=off, 15=on.
+        # Check them first so a device reporting ON in PRM but mode=0 in
+        # current_mode_num (transitional state) is not shown as OFF.
         if self._state.get("off") and not self._state.get("on"):
             return HVACMode.OFF
+        current_mode_num = self._state.get("current_mode_num")
+        if current_mode_num == 0 and self._state.get("off"):
+            return HVACMode.OFF
+        if current_mode_num is not None:
+            return EASY_MODE_TO_HA_MODE.get(current_mode_num, HVACMode.OFF)
+        # No state yet (before first poll) — return last known active mode.
         if self._last_known_hvac_mode is not None:
             return self._last_known_hvac_mode
         return HVACMode.OFF
