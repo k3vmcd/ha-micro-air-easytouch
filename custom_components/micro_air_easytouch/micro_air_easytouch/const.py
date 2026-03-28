@@ -10,6 +10,7 @@ UUIDS = {
 }
 
 # Map EasyTouch modes to Home Assistant HVAC modes
+# Note: modes 3 (cool_on) and 5 (heat_on) are active states
 HA_MODE_TO_EASY_MODE = {
     HVACMode.OFF: 0,
     HVACMode.FAN_ONLY: 1,
@@ -18,7 +19,18 @@ HA_MODE_TO_EASY_MODE = {
     HVACMode.DRY: 6,
     HVACMode.AUTO: 11,
 }
-EASY_MODE_TO_HA_MODE = {v: k for k, v in HA_MODE_TO_EASY_MODE.items()}
+
+# Reverse mapping includes active states (3=cool_on, 5=heat_on)
+EASY_MODE_TO_HA_MODE = {
+    0: HVACMode.OFF,
+    1: HVACMode.FAN_ONLY,
+    2: HVACMode.COOL,
+    3: HVACMode.COOL,    # cool_on -> COOL (actively cooling)
+    4: HVACMode.HEAT,
+    5: HVACMode.HEAT,    # heat_on -> HEAT (actively heating)
+    6: HVACMode.DRY,
+    11: HVACMode.AUTO,
+}
 
 # Fan mode mappings (general and mode-specific)
 FAN_MODES_FULL = {

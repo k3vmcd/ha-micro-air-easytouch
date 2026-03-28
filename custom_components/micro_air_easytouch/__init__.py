@@ -36,7 +36,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             _LOGGER.debug("Received BLE advertisement from %s: %s", address, service_info)
             data._start_update(service_info)
 
-    hass.bus.async_listen("bluetooth_service_info", _handle_bluetooth_update)
+    # Store the cancel callback to properly clean up on unload
+    cancel_listener = hass.bus.async_listen("bluetooth_service_info", _handle_bluetooth_update)
+    hass.data[DOMAIN][entry.entry_id]["cancel_listener"] = cancel_listener
 
     # Register services
     await async_register_services(hass)
@@ -47,7 +49,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Unload a config entry."""
     if unload_ok := await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
-        hass.data[DOMAIN].pop(entry.entry_id)
+        entry_data = hass.data[DOMAIN].pop(entry.entry_id)
+        # Cancel the bluetooth listener to prevent memory leak
+        if "cancel_listener" in entry_data:
+            entry_data["cancel_listener"]()
         # Unregister services
         await async_unregister_services(hass)
     return unload_ok
