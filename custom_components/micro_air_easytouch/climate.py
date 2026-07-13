@@ -135,6 +135,10 @@ class MicroAirEasyTouchClimate(ClimateEntity):
             via_device=(DOMAIN, f"MicroAirEasyTouch_{mac_address}"),
         )
         self._state = {}
+        # Availability is tracked separately from _state so a transient poll failure
+        # (missed advertisement, GATT timeout) surfaces as "unavailable" rather than
+        # collapsing the entity to hvac_mode=off / temperature=None. See upstream #27.
+        self._attr_available = False
 
     @property
     def icon(self) -> str:
@@ -154,11 +158,18 @@ class MicroAirEasyTouchClimate(ClimateEntity):
         return self._FAN_MODE_ICONS.get(self.fan_mode, "mdi:fan")
 
     async def _async_fetch_initial_state(self) -> None:
-        """Fetch the initial state from the device."""
+        """Fetch the initial state from the device.
+
+        On any failure (device not currently visible to the scanner, GATT
+        timeout, etc.) the previous self._state is kept as-is and only
+        _attr_available is flipped, so a transient miss shows as
+        "unavailable" instead of resetting the thermostat to hvac_mode=off.
+        """
         ble_device = async_ble_device_from_address(self.hass, self._mac_address)
         if not ble_device:
-            _LOGGER.error("Could not find BLE device: %s", self._mac_address)
-            self._state = {}
+            _LOGGER.debug("BLE device not currently visible: %s", self._mac_address)
+            self._attr_available = False
+            self.async_write_ha_state()
             return
 
         try:
@@ -170,14 +181,16 @@ class MicroAirEasyTouchClimate(ClimateEntity):
                 else:
                     # Fall back to root level data if zones not available (backward compatibility)
                     self._state = full_data
+                self._attr_available = True
                 _LOGGER.debug("Initial state fetched for zone %s: %s", self._zone, self._state)
-                self.async_write_ha_state()
             else:
-                self._state = {}
-                _LOGGER.warning("Failed to fetch status for zone %s", self._zone)
+                _LOGGER.debug("Failed to fetch status for zone %s", self._zone)
+                self._attr_available = False
+            self.async_write_ha_state()
         except Exception as e:
             _LOGGER.error("Failed to fetch initial state for zone %s: %s", self._zone, str(e))
-            self._state = {}
+            self._attr_available = False
+            self.async_write_ha_state()
 
     @property
     def current_temperature(self) -> float | None:
