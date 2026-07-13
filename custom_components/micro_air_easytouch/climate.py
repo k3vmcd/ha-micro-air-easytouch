@@ -2,8 +2,6 @@
 from __future__ import annotations
 
 import logging
-import json
-import time
 from typing import Any
 
 from homeassistant.components.climate import (
@@ -25,7 +23,6 @@ from homeassistant.components.bluetooth import async_ble_device_from_address
 from .const import DOMAIN
 from .micro_air_easytouch.parser import MicroAirEasyTouchBluetoothDeviceData
 from .micro_air_easytouch.const import (
-    UUIDS,
     HA_MODE_TO_EASY_MODE,
     EASY_MODE_TO_HA_MODE,
     FAN_MODES_FULL,
@@ -164,26 +161,20 @@ class MicroAirEasyTouchClimate(ClimateEntity):
             self._state = {}
             return
 
-        message = {"Type": "Get Status", "Zone": self._zone, "EM": self._data._email, "TM": int(time.time())}
         try:
-            if await self._data.send_command(self.hass, ble_device, message):
-                json_payload = await self._data._read_gatt_with_retry(self.hass, UUIDS["jsonReturn"], ble_device)
-                if json_payload:
-                    full_data = self._data.decrypt(json_payload.decode('utf-8'))
-                    # Get zone-specific data
-                    if 'zones' in full_data and self._zone in full_data['zones']:
-                        self._state = full_data['zones'][self._zone]
-                    else:
-                        # Fall back to root level data if zones not available (backward compatibility)
-                        self._state = full_data
-                    _LOGGER.debug("Initial state fetched for zone %s: %s", self._zone, self._state)
-                    self.async_write_ha_state()
+            full_data = await self._data.get_zone_status(self.hass, ble_device, self._zone)
+            if full_data:
+                # Get zone-specific data
+                if 'zones' in full_data and self._zone in full_data['zones']:
+                    self._state = full_data['zones'][self._zone]
                 else:
-                    self._state = {}
-                    _LOGGER.warning("No payload received for initial state zone %s", self._zone)
+                    # Fall back to root level data if zones not available (backward compatibility)
+                    self._state = full_data
+                _LOGGER.debug("Initial state fetched for zone %s: %s", self._zone, self._state)
+                self.async_write_ha_state()
             else:
                 self._state = {}
-                _LOGGER.warning("Failed to send command for initial state zone %s", self._zone)
+                _LOGGER.warning("Failed to fetch status for zone %s", self._zone)
         except Exception as e:
             _LOGGER.error("Failed to fetch initial state for zone %s: %s", self._zone, str(e))
             self._state = {}

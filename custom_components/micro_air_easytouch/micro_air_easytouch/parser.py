@@ -79,6 +79,11 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         self._client = None
         self._max_delay = 6.0
         self._notification_task = None
+        self._ble_device = None
+        # Serializes all BLE transactions (poll + commands) for this device across
+        # every zone's climate entity, since they all share this one data instance
+        # but the physical thermostat only accepts one BLE connection at a time.
+        self.lock = asyncio.Lock()
 
     def _get_operation_delay(self, hass, address: str, operation: str) -> float:
         """Calculate delay for specific operations from persistent storage."""
@@ -345,7 +350,12 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         return None
 
     async def reboot_device(self, hass, ble_device: BLEDevice) -> bool:
-        """Reboot the device by sending reset command."""
+        """Reboot the device by sending reset command, serialized against other BLE transactions."""
+        async with self.lock:
+            return await self._reboot_device_locked(hass, ble_device)
+
+    async def _reboot_device_locked(self, hass, ble_device: BLEDevice) -> bool:
+        """Reboot the device. Caller must hold self.lock."""
         try:
             self._ble_device = ble_device
             self._client = await self._connect_to_device(ble_device)
@@ -385,24 +395,45 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
 
     async def get_available_zones(self, hass, ble_device: BLEDevice) -> list[int]:
         """Get available zones from the device by querying its status."""
-        try:
-            message = {"Type": "Get Status", "Zone": 0, "EM": self._email, "TM": int(time.time())}
-            if await self.send_command(hass, ble_device, message):
-                json_payload = await self._read_gatt_with_retry(hass, UUIDS["jsonReturn"], ble_device)
-                if json_payload:
-                    decrypted_data = self.decrypt(json_payload.decode('utf-8'))
-                    zones = decrypted_data.get('available_zones', [0])
-                    _LOGGER.info("Detected %d zones: %s", len(zones), zones)
-                    return zones
-            _LOGGER.warning("Failed to get zone status from device, defaulting to zone 0")
-            return [0]  # Default to zone 0 if detection fails
-        except Exception as e:
-            _LOGGER.error("Failed to get available zones: %s", str(e))
-            return [0]  # Default to zone 0 if detection fails
-            
+        async with self.lock:
+            try:
+                message = {"Type": "Get Status", "Zone": 0, "EM": self._email, "TM": int(time.time())}
+                if await self._send_command_locked(hass, ble_device, message):
+                    json_payload = await self._read_gatt_with_retry(hass, UUIDS["jsonReturn"], ble_device)
+                    if json_payload:
+                        decrypted_data = self.decrypt(json_payload.decode('utf-8'))
+                        zones = decrypted_data.get('available_zones', [0])
+                        _LOGGER.info("Detected %d zones: %s", len(zones), zones)
+                        return zones
+                _LOGGER.warning("Failed to get zone status from device, defaulting to zone 0")
+                return [0]  # Default to zone 0 if detection fails
+            except Exception as e:
+                _LOGGER.error("Failed to get available zones: %s", str(e))
+                return [0]  # Default to zone 0 if detection fails
+
+    async def get_zone_status(self, hass, ble_device: BLEDevice, zone: int) -> dict | None:
+        """Fetch full status (all zones) from the device as one atomic BLE transaction."""
+        async with self.lock:
+            try:
+                message = {"Type": "Get Status", "Zone": zone, "EM": self._email, "TM": int(time.time())}
+                if await self._send_command_locked(hass, ble_device, message):
+                    json_payload = await self._read_gatt_with_retry(hass, UUIDS["jsonReturn"], ble_device)
+                    if json_payload:
+                        return self.decrypt(json_payload.decode('utf-8'))
+                return None
+            except Exception as e:
+                _LOGGER.error("Failed to get zone status for zone %s: %s", zone, str(e))
+                return None
+
     async def send_command(self, hass, ble_device: BLEDevice, command: dict) -> bool:
-        """Send command to device."""
+        """Send command to device, serialized against every other BLE transaction for this device."""
+        async with self.lock:
+            return await self._send_command_locked(hass, ble_device, command)
+
+    async def _send_command_locked(self, hass, ble_device: BLEDevice, command: dict) -> bool:
+        """Send command to device. Caller must hold self.lock."""
         try:
+            self._ble_device = ble_device
             if not self._client or not self._client.is_connected:
                 self._client = await self._connect_to_device(ble_device)
                 if not self._client or not self._client.is_connected:
