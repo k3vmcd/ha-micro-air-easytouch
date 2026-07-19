@@ -122,7 +122,10 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         try:
             self._update_callbacks.remove(callback)
         except ValueError:
-            _LOGGER.debug("Attempted to unregister a callback that was not registered")
+            _LOGGER.debug(
+                "Attempted to unregister a callback that was not registered: %r",
+                callback,
+            )
 
     def _notify_callbacks(self) -> None:
         """Notify all registered callbacks that state has been updated."""
@@ -130,7 +133,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             try:
                 callback()
             except Exception:  # noqa: BLE001
-                _LOGGER.exception("Error in device state update callback")
+                _LOGGER.exception("Error in device state update callback %r", callback)
 
     def _get_operation_delay(self, hass, address: str, operation: str) -> float:
         """Calculate delay for specific operations from persistent storage."""
