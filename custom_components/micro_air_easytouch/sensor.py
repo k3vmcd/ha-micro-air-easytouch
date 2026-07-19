@@ -64,12 +64,8 @@ class MicroAirEasyTouchTemperatureSensor(SensorEntity):
         return self._data.current_state.get("facePlateTemperature")
 
     def _handle_data_update(self) -> None:
-        """Push updated state to Home Assistant when shared data changes.
-
-        async_write_ha_state() is a regular (non-async) HA method and is safe
-        to call from synchronous callbacks running inside the event loop.
-        """
-        self.async_write_ha_state()
+        """Push updated state to Home Assistant when shared data changes."""
+        self.schedule_update_ha_state()
 
     async def async_added_to_hass(self) -> None:
         """Register callback to update when climate platform fetches data."""

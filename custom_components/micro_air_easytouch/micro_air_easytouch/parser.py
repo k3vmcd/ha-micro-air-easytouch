@@ -133,7 +133,11 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             try:
                 callback()
             except Exception:  # noqa: BLE001
-                _LOGGER.exception("Error in device state update callback %r", callback)
+                _LOGGER.exception(
+                    "Error in device state update callback %s.%s",
+                    callback.__module__,
+                    callback.__qualname__,
+                )
 
     def _get_operation_delay(self, hass, address: str, operation: str) -> float:
         """Calculate delay for specific operations from persistent storage."""
