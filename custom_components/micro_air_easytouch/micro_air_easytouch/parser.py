@@ -5,6 +5,7 @@ import asyncio
 import json
 import logging
 import time
+from collections.abc import Callable
 
 # Bluetooth-related imports for device communication
 from bleak import BLEDevice
@@ -105,13 +106,13 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         self._max_delay = 6.0
         self._notification_task = None
         self.current_state: dict = {}
-        self._update_callbacks: list = []
+        self._update_callbacks: list[Callable[[], None]] = []
 
-    def register_callback(self, callback) -> None:
+    def register_callback(self, callback: Callable[[], None]) -> None:
         """Register a callback to be called when device state is updated."""
         self._update_callbacks.append(callback)
 
-    def unregister_callback(self, callback) -> None:
+    def unregister_callback(self, callback: Callable[[], None]) -> None:
         """Unregister a previously registered callback."""
         self._update_callbacks.remove(callback)
 

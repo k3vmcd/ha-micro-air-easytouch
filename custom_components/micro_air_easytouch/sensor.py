@@ -5,11 +5,8 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable
 
-from homeassistant.components.sensor import (
-    SensorDeviceClass,
-    SensorEntity,
-    SensorStateClass,
-)
+from homeassistant.components.sensor import (SensorDeviceClass, SensorEntity,
+                                             SensorStateClass)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
@@ -62,6 +59,7 @@ class MicroAirEasyTouchTemperatureSensor(SensorEntity):
             model="Thermostat",
         )
         self._remove_callback: Callable[[], None] | None = None
+        self._on_data_update: Callable[[], None] | None = None
 
     @property
     def native_value(self) -> float | None:
@@ -74,11 +72,11 @@ class MicroAirEasyTouchTemperatureSensor(SensorEntity):
         def _on_data_update() -> None:
             self.async_write_ha_state()
 
-        self._data.register_callback(_on_data_update)
-        self._remove_callback = lambda: self._data.unregister_callback(_on_data_update)
+        self._on_data_update = _on_data_update
+        self._data.register_callback(self._on_data_update)
 
     async def async_will_remove_from_hass(self) -> None:
         """Unregister callback when entity is removed."""
-        if self._remove_callback is not None:
-            self._remove_callback()
-            self._remove_callback = None
+        if self._on_data_update is not None:
+            self._data.unregister_callback(self._on_data_update)
+            self._on_data_update = None
