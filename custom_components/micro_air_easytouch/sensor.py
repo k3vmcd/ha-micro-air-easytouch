@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
-import time
-from typing import Any
+from collections.abc import Callable
 
-from homeassistant.components.bluetooth import async_ble_device_from_address
-from homeassistant.components.sensor import (SensorDeviceClass, SensorEntity,
-                                             SensorStateClass)
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import UnitOfTemperature
 from homeassistant.core import HomeAssistant
@@ -16,7 +17,6 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
-from .micro_air_easytouch.const import UUIDS
 from .micro_air_easytouch.parser import MicroAirEasyTouchBluetoothDeviceData
 
 _LOGGER = logging.getLogger(__name__)
@@ -43,7 +43,7 @@ class MicroAirEasyTouchTemperatureSensor(SensorEntity):
     _attr_device_class = SensorDeviceClass.TEMPERATURE
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_native_unit_of_measurement = UnitOfTemperature.FAHRENHEIT
-    _attr_should_poll = True
+    _attr_should_poll = False
 
     def __init__(
         self,
@@ -61,45 +61,24 @@ class MicroAirEasyTouchTemperatureSensor(SensorEntity):
             manufacturer="Micro-Air",
             model="Thermostat",
         )
-        self._state: dict[str, Any] = {}
+        self._remove_callback: Callable[[], None] | None = None
 
     @property
     def native_value(self) -> float | None:
-        """Return the current ambient temperature."""
-        return self._state.get("facePlateTemperature")
+        """Return the current ambient temperature from shared device state."""
+        return self._data.current_state.get("facePlateTemperature")
 
-    async def _async_fetch_state(self) -> None:
-        """Fetch the current state from the device."""
-        ble_device = async_ble_device_from_address(self.hass, self._mac_address)
-        if not ble_device:
-            _LOGGER.error("Could not find BLE device: %s", self._mac_address)
-            self._state = {}
-            return
+    async def async_added_to_hass(self) -> None:
+        """Register callback to update when climate platform fetches data."""
 
-        message = {
-            "Type": "Get Status",
-            "Zone": 0,
-            "EM": self._data._email,
-            "TM": int(time.time()),
-        }
-        try:
-            if await self._data.send_command(self.hass, ble_device, message):
-                json_payload = await self._data._read_gatt_with_retry(
-                    self.hass, UUIDS["jsonReturn"], ble_device
-                )
-                if json_payload:
-                    self._state = self._data.decrypt(json_payload.decode("utf-8"))
-                    _LOGGER.debug("Temperature sensor state fetched: %s", self._state)
-                else:
-                    self._state = {}
-                    _LOGGER.warning("No payload received for temperature sensor")
-            else:
-                self._state = {}
-                _LOGGER.warning("Failed to send command for temperature sensor")
-        except Exception as e:
-            _LOGGER.error("Failed to fetch temperature sensor state: %s", str(e))
-            self._state = {}
+        def _on_data_update() -> None:
+            self.async_write_ha_state()
 
-    async def async_update(self) -> None:
-        """Update the sensor state."""
-        await self._async_fetch_state()
+        self._data.register_callback(_on_data_update)
+        self._remove_callback = lambda: self._data.unregister_callback(_on_data_update)
+
+    async def async_will_remove_from_hass(self) -> None:
+        """Unregister callback when entity is removed."""
+        if self._remove_callback is not None:
+            self._remove_callback()
+            self._remove_callback = None
