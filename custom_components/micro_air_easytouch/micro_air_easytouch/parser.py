@@ -10,9 +10,11 @@ from collections.abc import Callable
 # Bluetooth-related imports for device communication
 from bleak import BLEDevice
 from bleak.exc import BleakDBusError, BleakError
-from bleak_retry_connector import (BleakClientWithServiceCache,
-                                   establish_connection,
-                                   retry_bluetooth_connection_error)
+from bleak_retry_connector import (
+    BleakClientWithServiceCache,
+    establish_connection,
+    retry_bluetooth_connection_error,
+)
 from bluetooth_data_tools import short_address
 from bluetooth_sensor_state_data import BluetoothData
 from home_assistant_bluetooth import BluetoothServiceInfo
@@ -114,12 +116,18 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
 
     def unregister_callback(self, callback: Callable[[], None]) -> None:
         """Unregister a previously registered callback."""
-        self._update_callbacks.remove(callback)
+        try:
+            self._update_callbacks.remove(callback)
+        except ValueError:
+            _LOGGER.debug("Attempted to unregister a callback that was not registered")
 
     def _notify_callbacks(self) -> None:
         """Notify all registered callbacks that state has been updated."""
         for callback in self._update_callbacks:
-            callback()
+            try:
+                callback()
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception("Error in device state update callback")
 
     def _get_operation_delay(self, hass, address: str, operation: str) -> float:
         """Calculate delay for specific operations from persistent storage."""

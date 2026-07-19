@@ -58,7 +58,6 @@ class MicroAirEasyTouchTemperatureSensor(SensorEntity):
             manufacturer="Micro-Air",
             model="Thermostat",
         )
-        self._remove_callback: Callable[[], None] | None = None
         self._on_data_update: Callable[[], None] | None = None
 
     @property
