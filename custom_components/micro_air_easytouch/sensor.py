@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
 
 from homeassistant.components.sensor import (SensorDeviceClass, SensorEntity,
                                              SensorStateClass)
@@ -58,24 +57,20 @@ class MicroAirEasyTouchTemperatureSensor(SensorEntity):
             manufacturer="Micro-Air",
             model="Thermostat",
         )
-        self._on_data_update: Callable[[], None] | None = None
 
     @property
     def native_value(self) -> float | None:
         """Return the current ambient temperature from shared device state."""
         return self._data.current_state.get("facePlateTemperature")
 
+    def _handle_data_update(self) -> None:
+        """Push updated state to Home Assistant when shared data changes."""
+        self.async_write_ha_state()
+
     async def async_added_to_hass(self) -> None:
         """Register callback to update when climate platform fetches data."""
-
-        def _on_data_update() -> None:
-            self.async_write_ha_state()
-
-        self._on_data_update = _on_data_update
-        self._data.register_callback(self._on_data_update)
+        self._data.register_callback(self._handle_data_update)
 
     async def async_will_remove_from_hass(self) -> None:
         """Unregister callback when entity is removed."""
-        if self._on_data_update is not None:
-            self._data.unregister_callback(self._on_data_update)
-            self._on_data_update = None
+        self._data.unregister_callback(self._handle_data_update)

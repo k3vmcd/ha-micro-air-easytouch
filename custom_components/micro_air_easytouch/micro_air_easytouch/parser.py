@@ -10,11 +10,9 @@ from collections.abc import Callable
 # Bluetooth-related imports for device communication
 from bleak import BLEDevice
 from bleak.exc import BleakDBusError, BleakError
-from bleak_retry_connector import (
-    BleakClientWithServiceCache,
-    establish_connection,
-    retry_bluetooth_connection_error,
-)
+from bleak_retry_connector import (BleakClientWithServiceCache,
+                                   establish_connection,
+                                   retry_bluetooth_connection_error)
 from bluetooth_data_tools import short_address
 from bluetooth_sensor_state_data import BluetoothData
 from home_assistant_bluetooth import BluetoothServiceInfo
@@ -111,7 +109,12 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         self._update_callbacks: list[Callable[[], None]] = []
 
     def register_callback(self, callback: Callable[[], None]) -> None:
-        """Register a callback to be called when device state is updated."""
+        """Register a callback invoked after every successful state fetch.
+
+        Callbacks are called synchronously from within the HA event loop each
+        time the climate platform successfully decrypts a new device state.
+        Use async_write_ha_state() inside the callback to push updates to HA.
+        """
         self._update_callbacks.append(callback)
 
     def unregister_callback(self, callback: Callable[[], None]) -> None:
