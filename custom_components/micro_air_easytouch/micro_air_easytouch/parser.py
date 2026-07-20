@@ -10,9 +10,11 @@ from collections.abc import Callable
 # Bluetooth-related imports for device communication
 from bleak import BLEDevice
 from bleak.exc import BleakDBusError, BleakError
-from bleak_retry_connector import (BleakClientWithServiceCache,
-                                   establish_connection,
-                                   retry_bluetooth_connection_error)
+from bleak_retry_connector import (
+    BleakClientWithServiceCache,
+    establish_connection,
+    retry_bluetooth_connection_error,
+)
 from bluetooth_data_tools import short_address
 from bluetooth_sensor_state_data import BluetoothData
 from home_assistant_bluetooth import BluetoothServiceInfo
@@ -105,8 +107,15 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         self._client = None
         self._max_delay = 6.0
         self._notification_task = None
+        self._ble_device = None
         self.current_state: dict = {}
+        self._last_status_time: float = 0.0
         self._update_callbacks: list[Callable[[], None]] = []
+        # Serializes all BLE transactions (poll + commands) for this device
+        # across every zone's climate entity, since they all share this one
+        # data instance but the physical thermostat only accepts one BLE
+        # connection at a time.
+        self.lock = asyncio.Lock()
 
     def register_callback(self, callback: Callable[[], None]) -> None:
         """Register a callback invoked after every successful state fetch.
@@ -200,10 +209,18 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         self.set_title(name)
 
     def decrypt(self, data: bytes) -> dict:
-        """Parse and decode the device status data."""
-        status = json.loads(data)
-        info = status["Z_sts"]["0"]
-        param = status["PRM"]
+        """Parse and decode the device status data for all zones."""
+        try:
+            status = json.loads(data)
+        except json.JSONDecodeError as e:
+            _LOGGER.error("Failed to parse JSON data: %s", str(e))
+            return {"available_zones": [0], "zones": {0: {}}}
+
+        if "Z_sts" not in status:
+            _LOGGER.error("No zone status data found in device response")
+            return {"available_zones": [0], "zones": {0: {}}}
+
+        param = status.get("PRM", [])
         modes = {
             0: "off",
             5: "heat_on",
@@ -222,53 +239,102 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             128: "full auto",
         }
         fan_modes_fan_only = {0: "off", 1: "low", 2: "high"}
+
         hr_status = {}
-        hr_status["SN"] = status["SN"]
-        hr_status["autoHeat_sp"] = info[0]
-        hr_status["autoCool_sp"] = info[1]
-        hr_status["cool_sp"] = info[2]
-        hr_status["heat_sp"] = info[3]
-        hr_status["dry_sp"] = info[4]
-        hr_status["fan_mode_num"] = info[6]  # Fan setting in fan-only mode
-        hr_status["cool_fan_mode_num"] = info[7]  # Fan setting in cool mode
-        hr_status["auto_fan_mode_num"] = info[9]  # Fan setting in auto mode
-        hr_status["mode_num"] = info[10]
-        hr_status["heat_fan_mode_num"] = info[11]  # Fan setting in heat mode
-        hr_status["facePlateTemperature"] = info[12]
-        hr_status["current_mode_num"] = info[15]
+        hr_status["SN"] = status.get("SN", "Unknown")
         hr_status["ALL"] = status
 
-        if 7 in param:
-            hr_status["off"] = True
-        if 15 in param:
-            hr_status["on"] = True
+        # Detect available zones and process each one
+        available_zones = []
+        zone_data = {}
 
-        # Map modes
-        if hr_status["current_mode_num"] in modes:
-            hr_status["current_mode"] = modes[hr_status["current_mode_num"]]
-        if hr_status["mode_num"] in modes:
-            hr_status["mode"] = modes[hr_status["mode_num"]]
+        for zone_key in status["Z_sts"].keys():
+            try:
+                zone_num = int(zone_key)
+                info = status["Z_sts"][zone_key]
 
-        # Map fan modes based on current mode
-        current_mode = hr_status.get("mode", "off")
+                # Ensure info has enough elements
+                if len(info) < 16:
+                    _LOGGER.warning(
+                        "Zone %s has incomplete data (%d elements), skipping",
+                        zone_num,
+                        len(info),
+                    )
+                    continue
 
-        # Store the raw fan mode numbers and their string representations
-        if current_mode == "fan":
-            fan_num = info[6]
-            hr_status["fan_mode_num"] = fan_num
-            hr_status["fan_mode"] = fan_modes_fan_only.get(fan_num, "off")
-        elif current_mode == "cool":
-            fan_num = info[7]
-            hr_status["cool_fan_mode_num"] = fan_num
-            hr_status["cool_fan_mode"] = fan_modes_full.get(fan_num, "full auto")
-        elif current_mode == "heat":
-            fan_num = info[11]
-            hr_status["heat_fan_mode_num"] = fan_num
-            hr_status["heat_fan_mode"] = fan_modes_full.get(fan_num, "full auto")
-        elif current_mode == "auto":
-            fan_num = info[9]
-            hr_status["auto_fan_mode_num"] = fan_num
-            hr_status["auto_fan_mode"] = fan_modes_full.get(fan_num, "full auto")
+                # Only add to available_zones after validation passes
+                available_zones.append(zone_num)
+
+                zone_status = {}
+                zone_status["autoHeat_sp"] = info[0]
+                zone_status["autoCool_sp"] = info[1]
+                zone_status["cool_sp"] = info[2]
+                zone_status["heat_sp"] = info[3]
+                zone_status["dry_sp"] = info[4]
+                zone_status["fan_mode_num"] = info[6]  # Fan setting in fan-only mode
+                zone_status["cool_fan_mode_num"] = info[7]  # Fan setting in cool mode
+                zone_status["auto_fan_mode_num"] = info[9]  # Fan setting in auto mode
+                zone_status["mode_num"] = info[10]
+                zone_status["heat_fan_mode_num"] = info[11]  # Fan setting in heat mode
+                zone_status["facePlateTemperature"] = info[12]
+                zone_status["current_mode_num"] = info[15]
+
+                if 7 in param:
+                    zone_status["off"] = True
+                if 15 in param:
+                    zone_status["on"] = True
+
+                # Map modes
+                if zone_status["current_mode_num"] in modes:
+                    zone_status["current_mode"] = modes[zone_status["current_mode_num"]]
+                if zone_status["mode_num"] in modes:
+                    zone_status["mode"] = modes[zone_status["mode_num"]]
+
+                # Map fan modes based on current mode
+                current_mode = zone_status.get("mode", "off")
+
+                # Store the raw fan mode numbers and their string representations
+                if current_mode == "fan":
+                    fan_num = info[6]
+                    zone_status["fan_mode_num"] = fan_num
+                    zone_status["fan_mode"] = fan_modes_fan_only.get(fan_num, "off")
+                elif current_mode == "cool":
+                    fan_num = info[7]
+                    zone_status["cool_fan_mode_num"] = fan_num
+                    zone_status["cool_fan_mode"] = fan_modes_full.get(
+                        fan_num, "full auto"
+                    )
+                elif current_mode == "heat":
+                    fan_num = info[11]
+                    zone_status["heat_fan_mode_num"] = fan_num
+                    zone_status["heat_fan_mode"] = fan_modes_full.get(
+                        fan_num, "full auto"
+                    )
+                elif current_mode == "auto":
+                    fan_num = info[9]
+                    zone_status["auto_fan_mode_num"] = fan_num
+                    zone_status["auto_fan_mode"] = fan_modes_full.get(
+                        fan_num, "full auto"
+                    )
+
+                zone_data[zone_num] = zone_status
+            except (ValueError, IndexError, KeyError) as e:
+                _LOGGER.error("Error processing zone %s: %s", zone_key, str(e))
+                continue
+
+        hr_status["zones"] = zone_data
+        hr_status["available_zones"] = sorted(available_zones)
+
+        # Ensure we have at least one zone
+        if not available_zones:
+            _LOGGER.warning("No valid zones found, creating default zone 0")
+            hr_status["available_zones"] = [0]
+            hr_status["zones"] = {0: {}}
+
+        # For backward compatibility, if zone 0 exists, copy its data to the
+        # root level (used by the sensor platform and single-zone setups)
+        if 0 in zone_data:
+            hr_status.update(zone_data[0])
 
         return hr_status
 
@@ -421,7 +487,12 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         return None
 
     async def reboot_device(self, hass, ble_device: BLEDevice) -> bool:
-        """Reboot the device by sending reset command."""
+        """Reboot the device, serialized against other BLE transactions."""
+        async with self.lock:
+            return await self._reboot_device_locked(hass, ble_device)
+
+    async def _reboot_device_locked(self, hass, ble_device: BLEDevice) -> bool:
+        """Reboot the device by sending reset command. Caller must hold self.lock."""
         try:
             self._ble_device = ble_device
             self._client = await self._connect_to_device(ble_device)
@@ -461,9 +532,90 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             self._client = None
             self._ble_device = None
 
-    async def send_command(self, hass, ble_device: BLEDevice, command: dict) -> bool:
-        """Send command to device."""
+    async def get_available_zones(self, hass, ble_device: BLEDevice) -> list[int]:
+        """Get available zones from the device by querying its status."""
         try:
+            decrypted_data = await self.get_zone_status(hass, ble_device, 0)
+            if decrypted_data:
+                zones = decrypted_data.get("available_zones", [0])
+                _LOGGER.info("Detected %d zones: %s", len(zones), zones)
+                return zones
+            _LOGGER.warning(
+                "Failed to get zone status from device, defaulting to zone 0"
+            )
+            return [0]  # Default to zone 0 if detection fails
+        except Exception as e:
+            _LOGGER.error("Failed to get available zones: %s", str(e))
+            return [0]  # Default to zone 0 if detection fails
+
+    async def get_zone_status(
+        self, hass, ble_device: BLEDevice, zone: int, max_age: float = 0.0
+    ) -> dict | None:
+        """Fetch full status (all zones) as one atomic locked BLE transaction.
+
+        If max_age > 0 and the shared state was refreshed within the last
+        max_age seconds (e.g. by another zone entity's poll), the cached
+        state is returned instead of opening another BLE connection. On a
+        successful fetch the shared current_state is updated and registered
+        callbacks are notified so every zone entity and sensor stays in sync
+        from a single BLE transaction.
+        """
+        async with self.lock:
+            if (
+                max_age > 0
+                and self.current_state
+                and (time.monotonic() - self._last_status_time) < max_age
+            ):
+                _LOGGER.debug(
+                    "Returning cached device state for zone %s (age %.1fs)",
+                    zone,
+                    time.monotonic() - self._last_status_time,
+                )
+                return self.current_state
+            try:
+                message = {
+                    "Type": "Get Status",
+                    "Zone": zone,
+                    "EM": self._email,
+                    "TM": int(time.time()),
+                }
+                if await self._send_command_locked(hass, ble_device, message):
+                    json_payload = await self._read_gatt_with_retry(
+                        hass, UUIDS["jsonReturn"], ble_device
+                    )
+                    if json_payload:
+                        decrypted = self.decrypt(json_payload.decode("utf-8"))
+                        # Only accept payloads that contain usable zone data so
+                        # a transient bad read never wipes the last known state.
+                        if decrypted and any(decrypted.get("zones", {}).values()):
+                            self.current_state = decrypted
+                            self._last_status_time = time.monotonic()
+                            self._notify_callbacks()
+                            return decrypted
+                        _LOGGER.warning(
+                            "Device returned no usable zone data for zone %s", zone
+                        )
+                return None
+            except Exception as e:
+                _LOGGER.error("Failed to get zone status for zone %s: %s", zone, str(e))
+                return None
+
+    async def send_command(self, hass, ble_device: BLEDevice, command: dict) -> bool:
+        """Send command, serialized against every other BLE transaction."""
+        async with self.lock:
+            result = await self._send_command_locked(hass, ble_device, command)
+        if result and command.get("Type") == "Change":
+            # State-changing commands invalidate the cached device state so
+            # the next poll always fetches fresh data.
+            self._last_status_time = 0.0
+        return result
+
+    async def _send_command_locked(
+        self, hass, ble_device: BLEDevice, command: dict
+    ) -> bool:
+        """Send command to device. Caller must hold self.lock."""
+        try:
+            self._ble_device = ble_device
             if not self._client or not self._client.is_connected:
                 self._client = await self._connect_to_device(ble_device)
                 if not self._client or not self._client.is_connected:
