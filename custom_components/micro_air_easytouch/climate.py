@@ -15,6 +15,7 @@ from homeassistant.components.climate import (
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -35,6 +36,25 @@ _LOGGER = logging.getLogger(__name__)
 STATE_MAX_AGE_SECONDS = 25.0
 
 
+def _use_legacy_identity(hass: HomeAssistant, mac_address: str, zone: int) -> bool:
+    """Determine whether a single-zone device should use the legacy identity.
+
+    Users upgrading from pre-0.3.0 releases have an entity registered with the
+    legacy unique_id, while users of the experimental multi-zone build
+    (experimental-pr24-multizone) already have a per-zone unique_id. Keep
+    whichever identity is already in the registry so neither group's
+    configuration breaks. New installs default to the legacy identity.
+    """
+    registry = er.async_get(hass)
+    legacy_unique_id = f"microaireasytouch_{mac_address}_climate"
+    zone_unique_id = f"microaireasytouch_{mac_address}_climate_zone_{zone}"
+    if registry.async_get_entity_id("climate", DOMAIN, legacy_unique_id):
+        return True
+    if registry.async_get_entity_id("climate", DOMAIN, zone_unique_id):
+        return False
+    return True
+
+
 async def async_setup_entry(
     hass: HomeAssistant,
     config_entry: ConfigEntry,
@@ -48,22 +68,58 @@ async def async_setup_entry(
     ble_device = async_ble_device_from_address(hass, mac_address)
     if not ble_device:
         _LOGGER.error("Could not find BLE device to detect zones: %s", mac_address)
-        # Fall back to single zone if device not found
-        async_add_entities([MicroAirEasyTouchClimate(data, mac_address, 0)])
+        # Fall back to a single entity if device not found
+        async_add_entities(
+            [
+                MicroAirEasyTouchClimate(
+                    data,
+                    mac_address,
+                    0,
+                    use_legacy_identity=_use_legacy_identity(hass, mac_address, 0),
+                )
+            ]
+        )
         return
 
     # Probe device for available zones
     try:
         available_zones = await data.get_available_zones(hass, ble_device)
         _LOGGER.info("Detected zones for device %s: %s", mac_address, available_zones)
-        async_add_entities(
-            MicroAirEasyTouchClimate(data, mac_address, zone)
-            for zone in available_zones
-        )
+        if len(available_zones) <= 1:
+            # Single-zone device: keep whichever entity identity is already
+            # registered (pre-0.3.0 legacy or experimental multi-zone build)
+            # so existing Home Assistant configurations keep working.
+            zone = available_zones[0] if available_zones else 0
+            async_add_entities(
+                [
+                    MicroAirEasyTouchClimate(
+                        data,
+                        mac_address,
+                        zone,
+                        use_legacy_identity=_use_legacy_identity(
+                            hass, mac_address, zone
+                        ),
+                    )
+                ]
+            )
+        else:
+            async_add_entities(
+                MicroAirEasyTouchClimate(data, mac_address, zone)
+                for zone in available_zones
+            )
     except Exception as e:
         _LOGGER.error("Failed to detect zones for device %s: %s", mac_address, str(e))
-        # Fall back to single zone if detection fails
-        async_add_entities([MicroAirEasyTouchClimate(data, mac_address, 0)])
+        # Fall back to a single entity if detection fails
+        async_add_entities(
+            [
+                MicroAirEasyTouchClimate(
+                    data,
+                    mac_address,
+                    0,
+                    use_legacy_identity=_use_legacy_identity(hass, mac_address, 0),
+                )
+            ]
+        )
 
 
 class MicroAirEasyTouchClimate(ClimateEntity):
@@ -124,20 +180,35 @@ class MicroAirEasyTouchClimate(ClimateEntity):
         data: MicroAirEasyTouchBluetoothDeviceData,
         mac_address: str,
         zone: int,
+        use_legacy_identity: bool = False,
     ) -> None:
         """Initialize the climate."""
         self._data = data
         self._mac_address = mac_address
         self._zone = zone
-        self._attr_unique_id = f"microaireasytouch_{mac_address}_climate_zone_{zone}"
-        self._attr_name = f"Zone {zone}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"MicroAirEasyTouch_{mac_address}_zone_{zone}")},
-            name=f"EasyTouch Zone {zone}",
-            manufacturer="Micro-Air",
-            model="EasyTouch Thermostat Zone",
-            via_device=(DOMAIN, f"MicroAirEasyTouch_{mac_address}"),
-        )
+        if use_legacy_identity:
+            # Preserve the pre-0.3.0 (single zone) unique_id, name and
+            # device so upgrades don't break existing configurations.
+            self._attr_unique_id = f"microaireasytouch_{mac_address}_climate"
+            self._attr_name = "EasyTouch Climate"
+            self._attr_device_info = DeviceInfo(
+                identifiers={(DOMAIN, f"MicroAirEasyTouch_{mac_address}")},
+                name=f"EasyTouch {mac_address}",
+                manufacturer="Micro-Air",
+                model="Thermostat",
+            )
+        else:
+            self._attr_unique_id = (
+                f"microaireasytouch_{mac_address}_climate_zone_{zone}"
+            )
+            self._attr_name = f"Zone {zone}"
+            self._attr_device_info = DeviceInfo(
+                identifiers={(DOMAIN, f"MicroAirEasyTouch_{mac_address}_zone_{zone}")},
+                name=f"EasyTouch Zone {zone}",
+                manufacturer="Micro-Air",
+                model="EasyTouch Thermostat Zone",
+                via_device=(DOMAIN, f"MicroAirEasyTouch_{mac_address}"),
+            )
         self._state = {}
         # Availability is tracked separately from _state so a transient poll
         # failure (missed advertisement, GATT timeout) surfaces as
