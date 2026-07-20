@@ -48,22 +48,35 @@ async def async_setup_entry(
     ble_device = async_ble_device_from_address(hass, mac_address)
     if not ble_device:
         _LOGGER.error("Could not find BLE device to detect zones: %s", mac_address)
-        # Fall back to single zone if device not found
-        async_add_entities([MicroAirEasyTouchClimate(data, mac_address, 0)])
+        # Fall back to a single legacy entity if device not found
+        async_add_entities(
+            [MicroAirEasyTouchClimate(data, mac_address, 0, single_zone=True)]
+        )
         return
 
     # Probe device for available zones
     try:
         available_zones = await data.get_available_zones(hass, ble_device)
         _LOGGER.info("Detected zones for device %s: %s", mac_address, available_zones)
-        async_add_entities(
-            MicroAirEasyTouchClimate(data, mac_address, zone)
-            for zone in available_zones
-        )
+        if len(available_zones) <= 1:
+            # Single-zone device: keep the pre-0.3.0 entity identity
+            # (unique_id, name and device) so existing Home Assistant
+            # configurations keep working.
+            zone = available_zones[0] if available_zones else 0
+            async_add_entities(
+                [MicroAirEasyTouchClimate(data, mac_address, zone, single_zone=True)]
+            )
+        else:
+            async_add_entities(
+                MicroAirEasyTouchClimate(data, mac_address, zone)
+                for zone in available_zones
+            )
     except Exception as e:
         _LOGGER.error("Failed to detect zones for device %s: %s", mac_address, str(e))
-        # Fall back to single zone if detection fails
-        async_add_entities([MicroAirEasyTouchClimate(data, mac_address, 0)])
+        # Fall back to a single legacy entity if detection fails
+        async_add_entities(
+            [MicroAirEasyTouchClimate(data, mac_address, 0, single_zone=True)]
+        )
 
 
 class MicroAirEasyTouchClimate(ClimateEntity):
@@ -124,20 +137,35 @@ class MicroAirEasyTouchClimate(ClimateEntity):
         data: MicroAirEasyTouchBluetoothDeviceData,
         mac_address: str,
         zone: int,
+        single_zone: bool = False,
     ) -> None:
         """Initialize the climate."""
         self._data = data
         self._mac_address = mac_address
         self._zone = zone
-        self._attr_unique_id = f"microaireasytouch_{mac_address}_climate_zone_{zone}"
-        self._attr_name = f"Zone {zone}"
-        self._attr_device_info = DeviceInfo(
-            identifiers={(DOMAIN, f"MicroAirEasyTouch_{mac_address}_zone_{zone}")},
-            name=f"EasyTouch Zone {zone}",
-            manufacturer="Micro-Air",
-            model="EasyTouch Thermostat Zone",
-            via_device=(DOMAIN, f"MicroAirEasyTouch_{mac_address}"),
-        )
+        if single_zone:
+            # Preserve the pre-0.3.0 (single zone) unique_id, name and
+            # device so upgrades don't break existing configurations.
+            self._attr_unique_id = f"microaireasytouch_{mac_address}_climate"
+            self._attr_name = "EasyTouch Climate"
+            self._attr_device_info = DeviceInfo(
+                identifiers={(DOMAIN, f"MicroAirEasyTouch_{mac_address}")},
+                name=f"EasyTouch {mac_address}",
+                manufacturer="Micro-Air",
+                model="Thermostat",
+            )
+        else:
+            self._attr_unique_id = (
+                f"microaireasytouch_{mac_address}_climate_zone_{zone}"
+            )
+            self._attr_name = f"Zone {zone}"
+            self._attr_device_info = DeviceInfo(
+                identifiers={(DOMAIN, f"MicroAirEasyTouch_{mac_address}_zone_{zone}")},
+                name=f"EasyTouch Zone {zone}",
+                manufacturer="Micro-Air",
+                model="EasyTouch Thermostat Zone",
+                via_device=(DOMAIN, f"MicroAirEasyTouch_{mac_address}"),
+            )
         self._state = {}
         # Availability is tracked separately from _state so a transient poll
         # failure (missed advertisement, GATT timeout) surfaces as
