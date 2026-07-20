@@ -16,7 +16,7 @@ from .micro_air_easytouch.parser import MicroAirEasyTouchBluetoothDeviceData
 from .const import DOMAIN
 from .services import async_register_services, async_unregister_services
 
-PLATFORMS: Final = [Platform.BUTTON, Platform.CLIMATE]
+PLATFORMS: Final = [Platform.BUTTON, Platform.CLIMATE, Platform.SENSOR]
 _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

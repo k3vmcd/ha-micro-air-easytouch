@@ -1,39 +1,31 @@
 """Support for MicroAirEasyTouch climate control."""
+
 from __future__ import annotations
 
-import logging
 import json
+import logging
 import time
 from typing import Any
 
-from homeassistant.components.climate import (
-    ClimateEntity,
-    ClimateEntityFeature,
-    HVACMode,
-    HVACAction,
-)
-from homeassistant.const import (
-    ATTR_TEMPERATURE,
-    UnitOfTemperature,
-)
+from homeassistant.components.bluetooth import async_ble_device_from_address
+from homeassistant.components.climate import (ClimateEntity,
+                                              ClimateEntityFeature, HVACAction,
+                                              HVACMode)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity import DeviceInfo
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.components.bluetooth import async_ble_device_from_address
 
 from .const import DOMAIN
+from .micro_air_easytouch.const import (EASY_MODE_TO_HA_MODE,
+                                        FAN_MODES_FAN_ONLY, FAN_MODES_FULL,
+                                        FAN_MODES_REVERSE,
+                                        HA_MODE_TO_EASY_MODE, UUIDS)
 from .micro_air_easytouch.parser import MicroAirEasyTouchBluetoothDeviceData
-from .micro_air_easytouch.const import (
-    UUIDS,
-    HA_MODE_TO_EASY_MODE,
-    EASY_MODE_TO_HA_MODE,
-    FAN_MODES_FULL,
-    FAN_MODES_FAN_ONLY,
-    FAN_MODES_REVERSE,
-)
 
 _LOGGER = logging.getLogger(__name__)
+
 
 async def async_setup_entry(
     hass: HomeAssistant,
@@ -44,6 +36,7 @@ async def async_setup_entry(
     data = hass.data[DOMAIN][config_entry.entry_id]["data"]
     entity = MicroAirEasyTouchClimate(data, config_entry.unique_id)
     async_add_entities([entity])
+
 
 class MicroAirEasyTouchClimate(ClimateEntity):
     """Representation of MicroAirEasyTouch Climate."""
@@ -98,7 +91,9 @@ class MicroAirEasyTouchClimate(ClimateEntity):
         "auto": [128],
     }
 
-    def __init__(self, data: MicroAirEasyTouchBluetoothDeviceData, mac_address: str) -> None:
+    def __init__(
+        self, data: MicroAirEasyTouchBluetoothDeviceData, mac_address: str
+    ) -> None:
         """Initialize the climate."""
         self._data = data
         self._mac_address = mac_address
@@ -137,12 +132,21 @@ class MicroAirEasyTouchClimate(ClimateEntity):
             self._state = {}
             return
 
-        message = {"Type": "Get Status", "Zone": 0, "EM": self._data._email, "TM": int(time.time())}
+        message = {
+            "Type": "Get Status",
+            "Zone": 0,
+            "EM": self._data._email,
+            "TM": int(time.time()),
+        }
         try:
             if await self._data.send_command(self.hass, ble_device, message):
-                json_payload = await self._data._read_gatt_with_retry(self.hass, UUIDS["jsonReturn"], ble_device)
+                json_payload = await self._data._read_gatt_with_retry(
+                    self.hass, UUIDS["jsonReturn"], ble_device
+                )
                 if json_payload:
-                    self._state = self._data.decrypt(json_payload.decode('utf-8'))
+                    self._state = self._data.decrypt(json_payload.decode("utf-8"))
+                    self._data.current_state = self._state
+                    self._data._notify_callbacks()
                     _LOGGER.debug("Initial state fetched: %s", self._state)
                     self.async_write_ha_state()
                 else:
