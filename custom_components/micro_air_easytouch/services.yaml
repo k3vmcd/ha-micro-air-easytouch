@@ -2,7 +2,7 @@ set_location:
   name: Set Location
   description: Sets the latitude and longitude for a MicroAir EasyTouch Thermostat.
   target:
-    device:
+    entity:
       integration: micro_air_easytouch
   fields:
     address:
