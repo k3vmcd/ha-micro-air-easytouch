@@ -2,30 +2,26 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import time
 from typing import Any
 
 from homeassistant.components.bluetooth import async_ble_device_from_address
-from homeassistant.components.climate import (
-    ClimateEntity,
-    ClimateEntityFeature,
-    HVACAction,
-    HVACMode,
-)
+from homeassistant.components.climate import (ClimateEntity,
+                                              ClimateEntityFeature, HVACAction,
+                                              HVACMode)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, UnitOfTemperature
-from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.core import HomeAssistant, callback
+from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
-from .micro_air_easytouch.const import (
-    EASY_MODE_TO_HA_MODE,
-    FAN_MODES_FAN_ONLY_REVERSE,
-    FAN_MODES_REVERSE,
-    HA_MODE_TO_EASY_MODE,
-)
+from .micro_air_easytouch.const import (EASY_MODE_TO_HA_MODE,
+                                        FAN_MODES_FAN_ONLY, FAN_MODES_FULL,
+                                        FAN_MODES_REVERSE,
+                                        HA_MODE_TO_EASY_MODE, UUIDS)
 from .micro_air_easytouch.parser import MicroAirEasyTouchBluetoothDeviceData
 
 _LOGGER = logging.getLogger(__name__)
@@ -47,7 +43,7 @@ async def async_setup_entry(
     )
 
 
-class MicroAirEasyTouchClimate(CoordinatorEntity, ClimateEntity):
+class MicroAirEasyTouchClimate(ClimateEntity):
     """Representation of MicroAirEasyTouch Climate."""
 
     _attr_has_entity_name = True
@@ -102,11 +98,7 @@ class MicroAirEasyTouchClimate(CoordinatorEntity, ClimateEntity):
     }
 
     def __init__(
-        self,
-        coordinator,
-        data: MicroAirEasyTouchBluetoothDeviceData,
-        mac_address: str,
-        zone: int = 0,
+        self, data: MicroAirEasyTouchBluetoothDeviceData, mac_address: str
     ) -> None:
         """Initialize the climate."""
         super().__init__(coordinator)
@@ -142,6 +134,41 @@ class MicroAirEasyTouchClimate(CoordinatorEntity, ClimateEntity):
     def current_fan_icon(self) -> str:
         """Return the icon to use for the current fan mode."""
         return self._FAN_MODE_ICONS.get(self.fan_mode, "mdi:fan")
+
+    async def _async_fetch_initial_state(self) -> None:
+        """Fetch the initial state from the device."""
+        ble_device = async_ble_device_from_address(self.hass, self._mac_address)
+        if not ble_device:
+            _LOGGER.error("Could not find BLE device: %s", self._mac_address)
+            self._state = {}
+            return
+
+        message = {
+            "Type": "Get Status",
+            "Zone": 0,
+            "EM": self._data._email,
+            "TM": int(time.time()),
+        }
+        try:
+            if await self._data.send_command(self.hass, ble_device, message):
+                json_payload = await self._data._read_gatt_with_retry(
+                    self.hass, UUIDS["jsonReturn"], ble_device
+                )
+                if json_payload:
+                    self._state = self._data.decrypt(json_payload.decode("utf-8"))
+                    self._data.current_state = self._state
+                    self._data._notify_callbacks()
+                    _LOGGER.debug("Initial state fetched: %s", self._state)
+                    self.async_write_ha_state()
+                else:
+                    self._state = {}
+                    _LOGGER.warning("No payload received for initial state")
+            else:
+                self._state = {}
+                _LOGGER.warning("Failed to send command for initial state")
+        except Exception as e:
+            _LOGGER.error("Failed to fetch initial state: %s", str(e))
+            self._state = {}
 
     @property
     def current_temperature(self) -> float | None:
@@ -352,6 +379,8 @@ class MicroAirEasyTouchClimate(CoordinatorEntity, ClimateEntity):
             elif self.hvac_mode == HVACMode.DRY:
                 changes["dryFan"] = fan_value
             message = {"Type": "Change", "Changes": changes}
-            if await self._data.send_command(self.hass, ble_device, message):
-                # Request coordinator refresh after successful command
-                await self.coordinator.async_request_refresh()
+            await self._data.send_command(self.hass, ble_device, message)
+
+    async def async_update(self) -> None:
+        """Update the entity state manually if needed."""
+        await self._async_fetch_initial_state()

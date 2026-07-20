@@ -4,16 +4,15 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from functools import wraps
+import time
+from collections.abc import Callable
 
 # Bluetooth-related imports for device communication
 from bleak import BLEDevice
-from bleak.exc import BleakError
-from bleak_retry_connector import (
-    BleakClientWithServiceCache,
-    establish_connection,
-    retry_bluetooth_connection_error,
-)
+from bleak.exc import BleakDBusError, BleakError
+from bleak_retry_connector import (BleakClientWithServiceCache,
+                                   establish_connection,
+                                   retry_bluetooth_connection_error)
 from bluetooth_data_tools import short_address
 from bluetooth_sensor_state_data import BluetoothData
 from home_assistant_bluetooth import BluetoothServiceInfo
@@ -22,6 +21,8 @@ from sensor_state_data.enum import StrEnum
 from .const import DOMAIN, UUIDS
 
 _LOGGER = logging.getLogger(__name__)
+
+from functools import wraps
 
 
 def retry_authentication(retries=3, delay=1):
@@ -68,8 +69,7 @@ def retry_authentication(retries=3, delay=1):
                 )
             else:
                 _LOGGER.error(
-                    "Authentication failed after %d attempts with no exception",
-                    retries,
+                    "Authentication failed after %d attempts with no exception", retries
                 )
             return False
 
@@ -106,6 +106,39 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         self._ble_device = None
         self._max_delay = 6.0
         self._notification_task = None
+        self.current_state: dict = {}
+        self._update_callbacks: list[Callable[[], None]] = []
+
+    def register_callback(self, callback: Callable[[], None]) -> None:
+        """Register a callback invoked after every successful state fetch.
+
+        Callbacks are called synchronously from within the HA event loop each
+        time the climate platform successfully decrypts a new device state.
+        Use async_write_ha_state() inside the callback to push updates to HA.
+        """
+        self._update_callbacks.append(callback)
+
+    def unregister_callback(self, callback: Callable[[], None]) -> None:
+        """Unregister a previously registered callback."""
+        try:
+            self._update_callbacks.remove(callback)
+        except ValueError:
+            _LOGGER.debug(
+                "Attempted to unregister a callback that was not registered: %r",
+                callback,
+            )
+
+    def _notify_callbacks(self) -> None:
+        """Notify all registered callbacks that state has been updated."""
+        for callback in self._update_callbacks:
+            try:
+                callback()
+            except Exception:  # noqa: BLE001
+                _LOGGER.exception(
+                    "Error in device state update callback %s.%s",
+                    callback.__module__,
+                    callback.__qualname__,
+                )
 
     def _get_operation_delay(
         self, hass, address: str, operation: str
@@ -122,9 +155,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         self, hass, address: str, operation: str
     ) -> float:
         """Increase delay for specific operation and device with persistence."""
-        delays = hass.data.setdefault(DOMAIN, {}).setdefault(
-            "device_delays", {}
-        )
+        delays = hass.data.setdefault(DOMAIN, {}).setdefault("device_delays", {})
         if address not in delays:
             delays[address] = {}
         if operation not in delays[address]:
@@ -147,9 +178,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         self, hass, address: str, operation: str
     ) -> None:
         """Adjust delay for specific operation after success, reducing gradually."""
-        delays = hass.data.setdefault(DOMAIN, {}).setdefault(
-            "device_delays", {}
-        )
+        delays = hass.data.setdefault(DOMAIN, {}).setdefault("device_delays", {})
         if address in delays and operation in delays[address]:
             current = delays[address][operation]
             if current["failures"] > 0:
@@ -164,15 +193,12 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
                 )
             if current["failures"] == 0 and current["delay"] < 0.1:
                 current["delay"] = 0.0
-                _LOGGER.debug(
-                    "Reset delay for %s:%s to 0.0s", address, operation
-                )
+                _LOGGER.debug("Reset delay for %s:%s to 0.0s", address, operation)
 
     def _start_update(self, service_info: BluetoothServiceInfo) -> None:
         """Update from BLE advertisement data."""
         _LOGGER.debug(
-            "Parsing MicroAirEasyTouch BLE advertisement data: %s",
-            service_info,
+            "Parsing MicroAirEasyTouch BLE advertisement data: %s", service_info
         )
         self.set_device_manufacturer("MicroAirEasyTouch")
         self.set_device_type("Thermostat")
@@ -183,23 +209,15 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
     def decrypt(self, data: bytes, zone: int = 0) -> dict:
         """Parse and decode the device status data for a specific zone."""
         status = json.loads(data)
-        zone_key = str(zone)
-
-        # Check if the requested zone exists
-        if "Z_sts" not in status or zone_key not in status["Z_sts"]:
-            _LOGGER.warning("Zone %s not found in device data", zone_key)
-            return {}
-
-        info = status["Z_sts"][zone_key]
+        info = status["Z_sts"]["0"]
         param = status["PRM"]
         modes = {
             0: "off",
-            1: "fan",
-            2: "cool",
-            3: "cool_on",
-            4: "heat",
             5: "heat_on",
-            6: "dry",
+            4: "heat",
+            3: "cool_on",
+            2: "cool",
+            1: "fan",
             11: "auto",
         }
         fan_modes_full = {
@@ -213,13 +231,11 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         fan_modes_fan_only = {0: "off", 1: "low", 2: "high"}
         hr_status = {}
         hr_status["SN"] = status["SN"]
-        hr_status["zone"] = zone
         hr_status["autoHeat_sp"] = info[0]
         hr_status["autoCool_sp"] = info[1]
         hr_status["cool_sp"] = info[2]
         hr_status["heat_sp"] = info[3]
         hr_status["dry_sp"] = info[4]
-        hr_status["dry_fan_mode_num"] = info[5]  # Fan setting in dry mode
         hr_status["fan_mode_num"] = info[6]  # Fan setting in fan-only mode
         hr_status["cool_fan_mode_num"] = info[7]  # Fan setting in cool mode
         hr_status["auto_fan_mode_num"] = info[9]  # Fan setting in auto mode
@@ -251,27 +267,15 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
         elif current_mode == "cool":
             fan_num = info[7]
             hr_status["cool_fan_mode_num"] = fan_num
-            hr_status["cool_fan_mode"] = fan_modes_full.get(
-                fan_num, "full auto"
-            )
+            hr_status["cool_fan_mode"] = fan_modes_full.get(fan_num, "full auto")
         elif current_mode == "heat":
             fan_num = info[11]
             hr_status["heat_fan_mode_num"] = fan_num
-            hr_status["heat_fan_mode"] = fan_modes_full.get(
-                fan_num, "full auto"
-            )
+            hr_status["heat_fan_mode"] = fan_modes_full.get(fan_num, "full auto")
         elif current_mode == "auto":
             fan_num = info[9]
             hr_status["auto_fan_mode_num"] = fan_num
-            hr_status["auto_fan_mode"] = fan_modes_full.get(
-                fan_num, "full auto"
-            )
-        elif current_mode == "dry":
-            fan_num = info[5]
-            hr_status["dry_fan_mode_num"] = fan_num
-            hr_status["dry_fan_mode"] = fan_modes_full.get(
-                fan_num, "full auto"
-            )
+            hr_status["auto_fan_mode"] = fan_modes_full.get(fan_num, "full auto")
 
         return hr_status
 
@@ -327,12 +331,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             return False
 
     async def _write_gatt_with_retry(
-        self,
-        hass,
-        uuid: str,
-        data: bytes,
-        ble_device: BLEDevice,
-        retries: int = 3,
+        self, hass, uuid: str, data: bytes, ble_device: BLEDevice, retries: int = 3
     ) -> bool:
         """Write GATT characteristic with retry and adaptive delay."""
         self._ble_device = ble_device
@@ -382,23 +381,16 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
                 await asyncio.sleep(connect_delay)
             self._client = await self._connect_to_device(ble_device)
             if not self._client or not self._client.is_connected:
-                self._increase_operation_delay(
-                    hass, ble_device.address, "connect"
-                )
+                self._increase_operation_delay(hass, ble_device.address, "connect")
                 return False
             self._adjust_operation_delay(hass, ble_device.address, "connect")
-            auth_delay = self._get_operation_delay(
-                hass, ble_device.address, "auth"
-            )
+            auth_delay = self._get_operation_delay(hass, ble_device.address, "auth")
             if auth_delay > 0:
                 await asyncio.sleep(auth_delay)
             auth_result = await self.authenticate(self._password)
             if auth_result:
                 self._adjust_operation_delay(hass, ble_device.address, "auth")
-            else:
-                self._increase_operation_delay(
-                    hass, ble_device.address, "auth"
-                )
+                            self._increase_operation_delay(hass, ble_device.address, "auth")
             return auth_result
         except Exception as e:
             _LOGGER.error("Reconnection failed: %s", str(e))
@@ -418,9 +410,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
                         hass, ble_device
                     ):
                         return None
-                read_delay = self._get_operation_delay(
-                    hass, ble_device.address, "read"
-                )
+                read_delay = self._get_operation_delay(hass, ble_device.address, "read")
                 if read_delay > 0:
                     await asyncio.sleep(read_delay)
                 result = await self._client.read_gatt_char(characteristic)
@@ -455,9 +445,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             if not await self.authenticate(self._password):
                 _LOGGER.error("Failed to authenticate for reboot")
                 return False
-            write_delay = self._get_operation_delay(
-                hass, ble_device.address, "write"
-            )
+            write_delay = self._get_operation_delay(hass, ble_device.address, "write")
             if write_delay > 0:
                 await asyncio.sleep(write_delay)
             reset_cmd = {
@@ -476,9 +464,7 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
                     _LOGGER.info("Device is rebooting as expected")
                     return True
                 _LOGGER.error("Failed to send reboot command: %s", str(e))
-                self._increase_operation_delay(
-                    hass, ble_device.address, "write"
-                )
+                self._increase_operation_delay(hass, ble_device.address, "write")
                 return False
         except Exception as e:
             _LOGGER.error("Error during reboot: %s", str(e))
@@ -518,4 +504,3 @@ class MicroAirEasyTouchBluetoothDeviceData(BluetoothData):
             except Exception as e:
                 _LOGGER.debug("Error disconnecting: %s", str(e))
             self._client = None
-            self._ble_device = None
