@@ -75,7 +75,7 @@ async def async_setup_entry(
                     data,
                     mac_address,
                     0,
-                    single_zone=_use_legacy_identity(hass, mac_address, 0),
+                    use_legacy_identity=_use_legacy_identity(hass, mac_address, 0),
                 )
             ]
         )
@@ -96,7 +96,9 @@ async def async_setup_entry(
                         data,
                         mac_address,
                         zone,
-                        single_zone=_use_legacy_identity(hass, mac_address, zone),
+                        use_legacy_identity=_use_legacy_identity(
+                            hass, mac_address, zone
+                        ),
                     )
                 ]
             )
@@ -114,7 +116,7 @@ async def async_setup_entry(
                     data,
                     mac_address,
                     0,
-                    single_zone=_use_legacy_identity(hass, mac_address, 0),
+                    use_legacy_identity=_use_legacy_identity(hass, mac_address, 0),
                 )
             ]
         )
@@ -178,13 +180,13 @@ class MicroAirEasyTouchClimate(ClimateEntity):
         data: MicroAirEasyTouchBluetoothDeviceData,
         mac_address: str,
         zone: int,
-        single_zone: bool = False,
+        use_legacy_identity: bool = False,
     ) -> None:
         """Initialize the climate."""
         self._data = data
         self._mac_address = mac_address
         self._zone = zone
-        if single_zone:
+        if use_legacy_identity:
             # Preserve the pre-0.3.0 (single zone) unique_id, name and
             # device so upgrades don't break existing configurations.
             self._attr_unique_id = f"microaireasytouch_{mac_address}_climate"
