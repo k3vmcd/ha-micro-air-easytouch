@@ -1,20 +1,36 @@
 """Config flow for MicroAirEasyTouch integration."""
+
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import voluptuous as vol
-
 from homeassistant.components.bluetooth import (
     BluetoothServiceInfoBleak,
     async_discovered_service_info,
 )
 from homeassistant.config_entries import ConfigFlow
-from homeassistant.data_entry_flow import FlowResult
 from homeassistant.const import CONF_ADDRESS, CONF_PASSWORD, CONF_USERNAME
+from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers import selector
 
-from .micro_air_easytouch.parser import MicroAirEasyTouchBluetoothDeviceData  # Corrected import
-from .const import DOMAIN
+from .const import (
+    CONF_CONNECTION_TYPE,
+    CONF_CONTROL_TYPE,
+    CONN_TYPE_BLE,
+    CONN_TYPE_CLOUD,
+    DOMAIN,
+)
+from .micro_air_easytouch.cloud import (
+    CloudAuthenticationError,
+    CloudError,
+    MicroAirEasyTouchCloudDeviceData,
+)
+from .micro_air_easytouch.parser import MicroAirEasyTouchBluetoothDeviceData
+
+_LOGGER = logging.getLogger(__name__)
+
 
 class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
     """Handle a config flow for MicroAirEasyTouch."""
@@ -26,6 +42,140 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
         self._discovery_info: BluetoothServiceInfoBleak | None = None
         self._discovered_device: MicroAirEasyTouchBluetoothDeviceData | None = None
         self._discovered_devices: dict[str, str] = {}
+        self._cloud_email: str | None = None
+        self._cloud_password: str | None = None
+        self._cloud_things: list[dict] = []
+
+    async def async_step_user(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Choose the thermostat connection type."""
+        if user_input is not None:
+            if user_input[CONF_CONNECTION_TYPE] == CONN_TYPE_CLOUD:
+                return await self.async_step_cloud()
+            return await self.async_step_ble()
+
+        return self.async_show_form(
+            step_id="user",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_CONNECTION_TYPE, default=CONN_TYPE_CLOUD): vol.In(
+                        {
+                            CONN_TYPE_CLOUD: "Micro-Air Cloud (recommended)",
+                            CONN_TYPE_BLE: "Bluetooth Low Energy",
+                        }
+                    )
+                }
+            ),
+        )
+
+    async def async_step_cloud(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Authenticate with Micro-Air and list account thermostats."""
+        errors = {}
+        if user_input is not None:
+            self._cloud_email = user_input[CONF_USERNAME]
+            self._cloud_password = user_input[CONF_PASSWORD]
+            try:
+                self._cloud_things = (
+                    await MicroAirEasyTouchCloudDeviceData.async_discover_things(
+                        self.hass, self._cloud_email, self._cloud_password
+                    )
+                )
+                if not self._cloud_things:
+                    errors["base"] = "no_devices_found"
+                else:
+                    return await self.async_step_cloud_device()
+            except CloudAuthenticationError:
+                errors["base"] = "invalid_auth"
+            except CloudError:
+                errors["base"] = "cannot_connect"
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning("Cloud discovery failed: %s", type(exc).__name__)
+                errors["base"] = "cannot_connect"
+
+        return self.async_show_form(
+            step_id="cloud",
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_USERNAME): str,
+                    vol.Required(CONF_PASSWORD): selector.TextSelector(
+                        selector.TextSelectorConfig(
+                            type=selector.TextSelectorType.PASSWORD
+                        )
+                    ),
+                }
+            ),
+            errors=errors,
+        )
+
+    async def async_step_cloud_device(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Select a thermostat from the cloud account."""
+        devices = {
+            thing["Serial_number"]: thing.get("Name")
+            or f"EasyTouch {thing['Serial_number']}"
+            for thing in self._cloud_things
+        }
+        if user_input is not None:
+            serial_number = user_input[CONF_ADDRESS]
+            thing = next(
+                item
+                for item in self._cloud_things
+                if item["Serial_number"] == serial_number
+            )
+            await self.async_set_unique_id(serial_number, raise_on_progress=False)
+            self._abort_if_unique_id_configured()
+            return self.async_create_entry(
+                title=devices[serial_number],
+                data={
+                    CONF_USERNAME: self._cloud_email,
+                    CONF_PASSWORD: self._cloud_password,
+                    CONF_ADDRESS: serial_number,
+                    CONF_CONTROL_TYPE: thing.get("Control_Type", "EasyTouch"),
+                    CONF_CONNECTION_TYPE: CONN_TYPE_CLOUD,
+                },
+            )
+
+        return self.async_show_form(
+            step_id="cloud_device",
+            data_schema=vol.Schema({vol.Required(CONF_ADDRESS): vol.In(devices)}),
+        )
+
+    async def async_step_ble(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Handle the user step to pick a discovered BLE device."""
+        if user_input is not None:
+            address = user_input[CONF_ADDRESS]
+            await self.async_set_unique_id(address, raise_on_progress=False)
+            self._abort_if_unique_id_configured()
+            device = MicroAirEasyTouchBluetoothDeviceData(password=None, email=None)
+            self._discovered_device = device
+            return await self.async_step_password()
+
+        current_addresses = self._async_current_ids()
+        for discovery_info in async_discovered_service_info(self.hass, False):
+            address = discovery_info.address
+            if address in current_addresses or address in self._discovered_devices:
+                continue
+            device = MicroAirEasyTouchBluetoothDeviceData(password=None)
+            if device.supported(discovery_info):
+                self._discovered_devices[address] = (
+                    device.title or device.get_device_name() or discovery_info.name
+                )
+
+        if not self._discovered_devices:
+            return self.async_abort(reason="no_devices_found")
+
+        return self.async_show_form(
+            step_id="ble",
+            data_schema=vol.Schema(
+                {vol.Required(CONF_ADDRESS): vol.In(self._discovered_devices)}
+            ),
+        )
 
     async def async_step_bluetooth(
         self, discovery_info: BluetoothServiceInfoBleak
@@ -56,10 +206,16 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="password",
-            data_schema=vol.Schema({
-                vol.Required(CONF_USERNAME): str,
-                vol.Required(CONF_PASSWORD): str,
-            }),
+            data_schema=vol.Schema(
+                {
+                    vol.Required(CONF_USERNAME): str,
+                    vol.Required(CONF_PASSWORD): selector.TextSelector(
+                        selector.TextSelectorConfig(
+                            type=selector.TextSelectorType.PASSWORD
+                        )
+                    ),
+                }
+            ),
             errors=errors,
         )
 
@@ -79,46 +235,13 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
                     CONF_USERNAME: self._discovered_device._email,
                     CONF_PASSWORD: self._discovered_device._password,
                     CONF_ADDRESS: discovery_info.address,
-                }
+                    CONF_CONNECTION_TYPE: CONN_TYPE_BLE,
+                },
             )
 
         self._set_confirm_only()
         placeholders = {"name": title}
         self.context["title_placeholders"] = placeholders
         return self.async_show_form(
-            step_id="bluetooth_confirm",
-            description_placeholders=placeholders
-        )
-
-    async def async_step_user(
-        self, user_input: dict[str, Any] | None = None
-    ) -> FlowResult:
-        """Handle the user step to pick discovered device."""
-        if user_input is not None:
-            address = user_input[CONF_ADDRESS]
-            await self.async_set_unique_id(address, raise_on_progress=False)
-            self._abort_if_unique_id_configured()
-            device = MicroAirEasyTouchBluetoothDeviceData(password=None, email=None)
-            self._discovered_device = device
-            return await self.async_step_password()
-
-        current_addresses = self._async_current_ids()
-        for discovery_info in async_discovered_service_info(self.hass, False):
-            address = discovery_info.address
-            if address in current_addresses or address in self._discovered_devices:
-                continue
-            device = MicroAirEasyTouchBluetoothDeviceData(password=None)
-            if device.supported(discovery_info):
-                self._discovered_devices[address] = (
-                    device.title or device.get_device_name() or discovery_info.name
-                )
-
-        if not self._discovered_devices:
-            return self.async_abort(reason="no_devices_found")
-
-        return self.async_show_form(
-            step_id="user",
-            data_schema=vol.Schema(
-                {vol.Required(CONF_ADDRESS): vol.In(self._discovered_devices)}
-            ),
+            step_id="bluetooth_confirm", description_placeholders=placeholders
         )
