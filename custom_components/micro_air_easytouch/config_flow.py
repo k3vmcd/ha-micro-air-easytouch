@@ -45,6 +45,16 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
         self._cloud_email: str | None = None
         self._cloud_password: str | None = None
         self._cloud_things: list[dict] = []
+        self._reconfigure_entry = None
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> FlowResult:
+        """Replace an existing connection with cloud without recreating entities."""
+        self._reconfigure_entry = self.hass.config_entries.async_get_entry(
+            self.context["entry_id"]
+        )
+        return await self.async_step_cloud(user_input)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -126,18 +136,53 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
                 for item in self._cloud_things
                 if item["Serial_number"] == serial_number
             )
+            if self._reconfigure_entry is not None and any(
+                entry.unique_id == serial_number
+                and entry.entry_id != self._reconfigure_entry.entry_id
+                for entry in self.hass.config_entries.async_entries(DOMAIN)
+            ):
+                return self.async_abort(reason="already_configured")
+
+            data = {
+                CONF_USERNAME: self._cloud_email,
+                CONF_PASSWORD: self._cloud_password,
+                CONF_ADDRESS: serial_number,
+                CONF_CONTROL_TYPE: thing.get("Control_Type", "EasyTouch"),
+                CONF_CONNECTION_TYPE: CONN_TYPE_CLOUD,
+            }
+            cloud = MicroAirEasyTouchCloudDeviceData(
+                password=self._cloud_password,
+                email=self._cloud_email,
+                serial_number=serial_number,
+                control_type=data[CONF_CONTROL_TYPE],
+            )
+            try:
+                await cloud.async_start(self.hass)
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Cloud thermostat validation failed: %s", type(exc).__name__
+                )
+                return self.async_show_form(
+                    step_id="cloud_device",
+                    data_schema=vol.Schema(
+                        {vol.Required(CONF_ADDRESS): vol.In(devices)}
+                    ),
+                    errors={"base": "cannot_connect"},
+                )
+            finally:
+                await cloud.async_stop()
+
+            if self._reconfigure_entry is not None:
+                return self.async_update_reload_and_abort(
+                    self._reconfigure_entry,
+                    title=devices[serial_number],
+                    data=data,
+                    reason="reconfigure_successful",
+                )
+
             await self.async_set_unique_id(serial_number, raise_on_progress=False)
             self._abort_if_unique_id_configured()
-            return self.async_create_entry(
-                title=devices[serial_number],
-                data={
-                    CONF_USERNAME: self._cloud_email,
-                    CONF_PASSWORD: self._cloud_password,
-                    CONF_ADDRESS: serial_number,
-                    CONF_CONTROL_TYPE: thing.get("Control_Type", "EasyTouch"),
-                    CONF_CONNECTION_TYPE: CONN_TYPE_CLOUD,
-                },
-            )
+            return self.async_create_entry(title=devices[serial_number], data=data)
 
         return self.async_show_form(
             step_id="cloud_device",
