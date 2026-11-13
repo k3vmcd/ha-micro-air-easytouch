@@ -48,7 +48,7 @@
       "no_devices_found": "No thermostats were found.",
       "already_in_progress": "[%key:common::config_flow::abort::already_in_progress%]",
       "already_configured": "[%key:common::config_flow::abort::already_configured_device%]",
-      "reconfigure_successful": "Cloud connection configured. Your existing thermostat entities were preserved."
+      "reconfigure_successful": "Connection settings updated. Your existing thermostat entities were preserved."
     }
   }
 }

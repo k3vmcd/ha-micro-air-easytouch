@@ -71,7 +71,7 @@ This repository is not yet in the HACS default store, so it needs to be added as
 
 Cloud credentials are stored in the Home Assistant config entry. The integration creates a temporary MQTT certificate when it starts and deletes it when the entry is unloaded; private keys are not saved to disk.
 
-To switch an existing Bluetooth installation to cloud, open the integration entry's **Reconfigure** action and complete the cloud setup. This replaces the Bluetooth connection settings while preserving the config entry and all existing entity IDs, names, automations, and dashboards. The cloud connection is validated before the entry is updated.
+To switch an existing installation between Bluetooth and cloud, open the integration entry's **Reconfigure** action and choose the new connection type. This replaces the previous connection settings while preserving the config entry and all existing entity IDs, names, automations, and dashboards. Cloud connections are validated before the entry is updated.
 
 ### Bluetooth Low Energy
 

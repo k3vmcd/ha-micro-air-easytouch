@@ -43,6 +43,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             control_type=entry.data.get(CONF_CONTROL_TYPE, "EasyTouch"),
         )
 
+    data.transport_address = entry.data.get(CONF_ADDRESS, address)
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {"data": data}
 
     if isinstance(data, MicroAirEasyTouchCloudDeviceData):
@@ -59,9 +60,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         @callback
         def _handle_bluetooth_update(service_info: BluetoothServiceInfoBleak) -> None:
             """Update device info from advertisements."""
-            if service_info.address == address:
+            if service_info.address == data.transport_address:
                 _LOGGER.debug(
-                    "Received BLE advertisement from %s: %s", address, service_info
+                    "Received BLE advertisement from %s: %s",
+                    data.transport_address,
+                    service_info,
                 )
                 data._start_update(service_info)
 

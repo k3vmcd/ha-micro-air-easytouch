@@ -14,4 +14,6 @@ def ble_device_for_data(hass, data, address: str):
     """Return a BLE device when needed, or None for cloud devices."""
     if is_cloud_data(data):
         return None
-    return async_ble_device_from_address(hass, address)
+    return async_ble_device_from_address(
+        hass, getattr(data, "transport_address", address)
+    )

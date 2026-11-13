@@ -42,6 +42,7 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
         self._discovery_info: BluetoothServiceInfoBleak | None = None
         self._discovered_device: MicroAirEasyTouchBluetoothDeviceData | None = None
         self._discovered_devices: dict[str, str] = {}
+        self._ble_discovery_info: dict[str, BluetoothServiceInfoBleak] = {}
         self._cloud_email: str | None = None
         self._cloud_password: str | None = None
         self._cloud_things: list[dict] = []
@@ -54,7 +55,7 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
         self._reconfigure_entry = self.hass.config_entries.async_get_entry(
             self.context["entry_id"]
         )
-        return await self.async_step_cloud(user_input)
+        return await self.async_step_user(user_input)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -195,8 +196,17 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle the user step to pick a discovered BLE device."""
         if user_input is not None:
             address = user_input[CONF_ADDRESS]
-            await self.async_set_unique_id(address, raise_on_progress=False)
-            self._abort_if_unique_id_configured()
+            if self._reconfigure_entry is not None:
+                if any(
+                    entry.unique_id == address
+                    and entry.entry_id != self._reconfigure_entry.entry_id
+                    for entry in self.hass.config_entries.async_entries(DOMAIN)
+                ):
+                    return self.async_abort(reason="already_configured")
+            else:
+                await self.async_set_unique_id(address, raise_on_progress=False)
+                self._abort_if_unique_id_configured()
+            self._discovery_info = self._ble_discovery_info[address]
             device = MicroAirEasyTouchBluetoothDeviceData(password=None, email=None)
             self._discovered_device = device
             return await self.async_step_password()
@@ -208,6 +218,7 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
                 continue
             device = MicroAirEasyTouchBluetoothDeviceData(password=None)
             if device.supported(discovery_info):
+                self._ble_discovery_info[address] = discovery_info
                 self._discovered_devices[address] = (
                     device.title or device.get_device_name() or discovery_info.name
                 )
@@ -274,15 +285,20 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
         discovery_info = self._discovery_info
         title = device.title or device.get_device_name() or discovery_info.name
         if user_input is not None:
-            return self.async_create_entry(
-                title=title,
-                data={
-                    CONF_USERNAME: self._discovered_device._email,
-                    CONF_PASSWORD: self._discovered_device._password,
-                    CONF_ADDRESS: discovery_info.address,
-                    CONF_CONNECTION_TYPE: CONN_TYPE_BLE,
-                },
-            )
+            data = {
+                CONF_USERNAME: self._discovered_device._email,
+                CONF_PASSWORD: self._discovered_device._password,
+                CONF_ADDRESS: discovery_info.address,
+                CONF_CONNECTION_TYPE: CONN_TYPE_BLE,
+            }
+            if self._reconfigure_entry is not None:
+                return self.async_update_reload_and_abort(
+                    self._reconfigure_entry,
+                    title=title,
+                    data=data,
+                    reason="reconfigure_successful",
+                )
+            return self.async_create_entry(title=title, data=data)
 
         self._set_confirm_only()
         placeholders = {"name": title}
