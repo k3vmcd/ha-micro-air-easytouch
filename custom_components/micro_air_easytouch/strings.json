@@ -1,22 +1,54 @@
 {
   "config": {
-    "flow_title": "[%key:component::bluetooth::config::flow_title%]",
+    "flow_title": "Micro-Air EasyTouch",
     "step": {
       "user": {
-        "description": "[%key:component::bluetooth::config::step::user::description%]",
+        "description": "Choose how Home Assistant should connect to your thermostat.",
         "data": {
-          "address": "[%key:common::config_flow::data::device%]"
+          "connection_type": "Connection type"
+        }
+      },
+      "cloud": {
+        "description": "Sign in with the same account you use in the Micro-Air EasyTouch app.",
+        "data": {
+          "username": "Account email",
+          "password": "Account password"
+        }
+      },
+      "cloud_device": {
+        "description": "Select the thermostat to add.",
+        "data": {
+          "address": "Thermostat"
+        }
+      },
+      "ble": {
+        "description": "Select a thermostat discovered over Bluetooth.",
+        "data": {
+          "address": "Thermostat"
+        }
+      },
+      "password": {
+        "description": "Enter the account used by the Micro-Air EasyTouch app.",
+        "data": {
+          "username": "Account email",
+          "password": "Account password"
         }
       },
       "bluetooth_confirm": {
         "description": "[%key:component::bluetooth::config::step::bluetooth_confirm::description%]"
       }
     },
+    "error": {
+      "invalid_auth": "The Micro-Air account email or password is incorrect.",
+      "cannot_connect": "Could not connect to the Micro-Air cloud service.",
+      "no_devices_found": "No thermostats were found for this account."
+    },
     "abort": {
       "not_supported": "Device not supported",
-      "no_devices_found": "[%key:common::config_flow::abort::no_devices_found%]",
+      "no_devices_found": "No thermostats were found.",
       "already_in_progress": "[%key:common::config_flow::abort::already_in_progress%]",
-      "already_configured": "[%key:common::config_flow::abort::already_configured_device%]"
+      "already_configured": "[%key:common::config_flow::abort::already_configured_device%]",
+      "reconfigure_successful": "Connection settings updated. Your existing thermostat entities were preserved."
     }
   }
 }

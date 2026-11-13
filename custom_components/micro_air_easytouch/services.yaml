@@ -6,9 +6,9 @@ set_location:
       integration: micro_air_easytouch
   fields:
     address:
-      name: MAC Address
-      description: The Bluetooth MAC address of the thermostat (e.g., 00:11:22:33:44:55).
-      required: true
+      name: Device Address
+      description: Optional Bluetooth MAC or cloud serial number. Leave blank when only one thermostat is configured.
+      required: false
       example: "00:11:22:33:44:55"
       selector:
         text:

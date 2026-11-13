@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from homeassistant.components.bluetooth import async_ble_device_from_address
 from homeassistant.components.climate import (
     ClimateEntity,
     ClimateEntityFeature,
@@ -20,6 +19,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import DOMAIN
+from .device import ble_device_for_data, is_cloud_data
 from .micro_air_easytouch.const import (
     EASY_MODE_TO_HA_MODE,
     FAN_MODES_FAN_ONLY,
@@ -31,7 +31,7 @@ from .micro_air_easytouch.parser import MicroAirEasyTouchBluetoothDeviceData
 _LOGGER = logging.getLogger(__name__)
 
 # Reuse device state fetched within this window (by any zone entity) instead
-# of opening another BLE connection. Must be shorter than the entity poll
+# of querying the thermostat again. Must be shorter than the entity poll
 # interval so a regular poll cycle still refreshes the state exactly once.
 STATE_MAX_AGE_SECONDS = 25.0
 
@@ -65,8 +65,8 @@ async def async_setup_entry(
     mac_address = config_entry.unique_id
 
     # Get BLE device to probe for available zones
-    ble_device = async_ble_device_from_address(hass, mac_address)
-    if not ble_device:
+    ble_device = ble_device_for_data(hass, data, mac_address)
+    if not ble_device and not is_cloud_data(data):
         _LOGGER.error("Could not find BLE device to detect zones: %s", mac_address)
         # Fall back to a single entity if device not found
         async_add_entities(
@@ -239,7 +239,7 @@ class MicroAirEasyTouchClimate(ClimateEntity):
 
         Called whenever any zone entity (or the initial zone probe)
         successfully fetches full device status, so every zone stays in sync
-        from a single BLE transaction.
+        from a single device transaction.
         """
         full_data = self._data.current_state
         if full_data and self._zone in full_data.get("zones", {}):
@@ -265,8 +265,8 @@ class MicroAirEasyTouchClimate(ClimateEntity):
         _attr_available is flipped, so a transient miss shows as
         "unavailable" instead of resetting the thermostat to hvac_mode=off.
         """
-        ble_device = async_ble_device_from_address(self.hass, self._mac_address)
-        if not ble_device:
+        ble_device = ble_device_for_data(self.hass, self._data, self._mac_address)
+        if not ble_device and not is_cloud_data(self._data):
             _LOGGER.debug("BLE device not currently visible: %s", self._mac_address)
             self._attr_available = False
             self.async_write_ha_state()
@@ -385,8 +385,8 @@ class MicroAirEasyTouchClimate(ClimateEntity):
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set new target temperature."""
-        ble_device = async_ble_device_from_address(self.hass, self._mac_address)
-        if not ble_device:
+        ble_device = ble_device_for_data(self.hass, self._data, self._mac_address)
+        if not ble_device and not is_cloud_data(self._data):
             _LOGGER.error("Could not find BLE device")
             return
 
@@ -409,8 +409,8 @@ class MicroAirEasyTouchClimate(ClimateEntity):
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         """Set new target hvac mode."""
-        ble_device = async_ble_device_from_address(self.hass, self._mac_address)
-        if not ble_device:
+        ble_device = ble_device_for_data(self.hass, self._data, self._mac_address)
+        if not ble_device and not is_cloud_data(self._data):
             _LOGGER.error("Could not find BLE device")
             return
 
@@ -428,8 +428,8 @@ class MicroAirEasyTouchClimate(ClimateEntity):
 
     async def async_set_fan_mode(self, fan_mode: str) -> None:
         """Set new target fan mode using standard Home Assistant names."""
-        ble_device = async_ble_device_from_address(self.hass, self._mac_address)
-        if not ble_device:
+        ble_device = ble_device_for_data(self.hass, self._data, self._mac_address)
+        if not ble_device and not is_cloud_data(self._data):
             _LOGGER.error("Could not find BLE device")
             return
 

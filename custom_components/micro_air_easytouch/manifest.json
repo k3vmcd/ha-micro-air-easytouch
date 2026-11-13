@@ -12,8 +12,12 @@
   "dependencies": ["bluetooth_adapters"],
   "documentation": "https://github.com/k3vmcd/ha-micro-air-easytouch",
   "integration_type": "device",
-  "iot_class": "local_push",
+  "iot_class": "cloud_polling",
   "issue_tracker": "https://github.com/k3vmcd/ha-micro-air-easytouch/issues",
-  "requirements": [],
-  "version": "0.3.0"
+  "requirements": [
+    "awsiotsdk==1.31.0",
+    "boto3==1.42.97",
+    "pycognito==2024.5.1"
+  ],
+  "version": "0.4.0"
 }
