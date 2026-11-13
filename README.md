@@ -62,7 +62,7 @@ This repository is not yet in the HACS default store, so it needs to be added as
 
 ## Setup
 
-### Micro-Air Cloud (recommended)
+### Micro-Air Cloud
 
 1. Connect the thermostat to Wi-Fi using the official Micro-Air app and confirm it works there.
 2. In Home Assistant, go to **Settings > Devices & Services > Add Integration** and search for **Micro-Air EasyTouch**.

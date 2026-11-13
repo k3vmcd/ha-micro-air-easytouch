@@ -70,10 +70,10 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="user",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_CONNECTION_TYPE, default=CONN_TYPE_CLOUD): vol.In(
+                    vol.Required(CONF_CONNECTION_TYPE, default=CONN_TYPE_BLE): vol.In(
                         {
-                            CONN_TYPE_CLOUD: "Micro-Air Cloud (recommended)",
                             CONN_TYPE_BLE: "Bluetooth Low Energy",
+                            CONN_TYPE_CLOUD: "Micro-Air Cloud",
                         }
                     )
                 }
