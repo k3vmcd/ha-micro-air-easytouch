@@ -48,6 +48,24 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
         self._cloud_things: list[dict] = []
         self._reconfigure_entry = None
 
+    def _other_config_entries(self) -> list:
+        """Return entries other than the one being reconfigured."""
+        current_entry_id = (
+            self._reconfigure_entry.entry_id if self._reconfigure_entry else None
+        )
+        return [
+            entry
+            for entry in self.hass.config_entries.async_entries(DOMAIN)
+            if entry.entry_id != current_entry_id
+        ]
+
+    def _address_is_configured(self, address: str) -> bool:
+        """Return whether another entry already uses this transport address."""
+        return any(
+            address in (entry.unique_id, entry.data.get(CONF_ADDRESS))
+            for entry in self._other_config_entries()
+        )
+
     async def async_step_reconfigure(
         self, user_input: dict[str, Any] | None = None
     ) -> FlowResult:
@@ -137,11 +155,7 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
                 for item in self._cloud_things
                 if item["Serial_number"] == serial_number
             )
-            if self._reconfigure_entry is not None and any(
-                entry.unique_id == serial_number
-                and entry.entry_id != self._reconfigure_entry.entry_id
-                for entry in self.hass.config_entries.async_entries(DOMAIN)
-            ):
+            if self._address_is_configured(serial_number):
                 return self.async_abort(reason="already_configured")
 
             data = {
@@ -196,14 +210,9 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
         """Handle the user step to pick a discovered BLE device."""
         if user_input is not None:
             address = user_input[CONF_ADDRESS]
-            if self._reconfigure_entry is not None:
-                if any(
-                    entry.unique_id == address
-                    and entry.entry_id != self._reconfigure_entry.entry_id
-                    for entry in self.hass.config_entries.async_entries(DOMAIN)
-                ):
-                    return self.async_abort(reason="already_configured")
-            else:
+            if self._address_is_configured(address):
+                return self.async_abort(reason="already_configured")
+            if self._reconfigure_entry is None:
                 await self.async_set_unique_id(address, raise_on_progress=False)
                 self._abort_if_unique_id_configured()
             self._discovery_info = self._ble_discovery_info[address]
@@ -211,7 +220,12 @@ class MicroAirEasyTouchConfigFlow(ConfigFlow, domain=DOMAIN):
             self._discovered_device = device
             return await self.async_step_password()
 
-        current_addresses = self._async_current_ids()
+        current_addresses = {
+            value
+            for entry in self._other_config_entries()
+            for value in (entry.unique_id, entry.data.get(CONF_ADDRESS))
+            if value
+        }
         for discovery_info in async_discovered_service_info(self.hass, False):
             address = discovery_info.address
             if address in current_addresses or address in self._discovered_devices:

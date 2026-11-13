@@ -19,6 +19,7 @@ from .parser import MicroAirEasyTouchBluetoothDeviceData
 _LOGGER = logging.getLogger(__name__)
 
 REGION = "us-east-1"
+# Public application configuration embedded in the official EasyTouch mobile app.
 USER_POOL_ID = "us-east-1_M9Hs9kugG"
 CLIENT_ID = "2mfujqa7vidd2td9h08k9m061s"
 CLIENT_SECRET = "bbq2v6edtn25j0pgdus7tsi4fq93rgiqfq0g0ener8m896o2euu"
@@ -87,7 +88,7 @@ def _read_account(credentials: dict, email: str) -> dict | None:
     return result.get("Item")
 
 
-def _delete_certificate(iot, certificate: dict, attached: bool) -> None:
+def _delete_certificate(iot, certificate: dict, attached: bool) -> bool:
     """Detach, deactivate, and delete a temporary MQTT certificate."""
     certificate_id = certificate["certificateId"]
     try:
@@ -102,6 +103,8 @@ def _delete_certificate(iot, certificate: dict, attached: bool) -> None:
         _LOGGER.warning(
             "Failed to delete temporary MQTT certificate: %s", type(exc).__name__
         )
+        return False
+    return True
 
 
 class MicroAirEasyTouchCloudDeviceData(MicroAirEasyTouchBluetoothDeviceData):
@@ -126,6 +129,7 @@ class MicroAirEasyTouchCloudDeviceData(MicroAirEasyTouchBluetoothDeviceData):
         self._certificate_attached = False
         self._connected = asyncio.Event()
         self._status_received = asyncio.Event()
+        self._hass = None
         self._loop = None
         self._stopping = False
 
@@ -152,12 +156,13 @@ class MicroAirEasyTouchCloudDeviceData(MicroAirEasyTouchBluetoothDeviceData):
 
     async def async_start(self, hass) -> None:
         """Authenticate, create a temporary certificate, and connect to MQTT."""
+        self._hass = hass
         self._loop = asyncio.get_running_loop()
         self._stopping = False
         _, credentials = await hass.async_add_executor_job(
             _authenticate, self._email, self._password
         )
-        self._iot = _aws_client("iot", credentials)
+        self._iot = await hass.async_add_executor_job(_aws_client, "iot", credentials)
         self._certificate = await hass.async_add_executor_job(
             partial(self._iot.create_keys_and_certificate, setAsActive=True)
         )
@@ -196,15 +201,30 @@ class MicroAirEasyTouchCloudDeviceData(MicroAirEasyTouchBluetoothDeviceData):
                 _LOGGER.debug("MQTT disconnect failed: %s", type(exc).__name__)
             self._connection = None
         if self._iot is not None and self._certificate is not None:
-            certificate = self._certificate
-            attached = self._certificate_attached
-            self._certificate = None
-            self._certificate_attached = False
-            loop = asyncio.get_running_loop()
-            await loop.run_in_executor(
-                None, _delete_certificate, self._iot, certificate, attached
-            )
-        self._iot = None
+            try:
+                _, credentials = await self._hass.async_add_executor_job(
+                    _authenticate, self._email, self._password
+                )
+                self._iot = await self._hass.async_add_executor_job(
+                    _aws_client, "iot", credentials
+                )
+                deleted = await self._hass.async_add_executor_job(
+                    _delete_certificate,
+                    self._iot,
+                    self._certificate,
+                    self._certificate_attached,
+                )
+                if deleted:
+                    self._certificate = None
+                    self._certificate_attached = False
+                    self._iot = None
+            except Exception as exc:  # noqa: BLE001
+                _LOGGER.warning(
+                    "Certificate cleanup failed; retaining metadata for retry: %s",
+                    type(exc).__name__,
+                )
+        else:
+            self._iot = None
 
     def _on_connection_interrupted(self, connection, error, **kwargs) -> None:
         """Handle an MQTT interruption from the AWS CRT thread."""

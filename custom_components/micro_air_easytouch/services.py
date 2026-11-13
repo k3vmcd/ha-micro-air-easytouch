@@ -7,6 +7,7 @@ import time
 
 import homeassistant.helpers.config_validation as cv
 import voluptuous as vol
+from homeassistant.const import CONF_ADDRESS
 from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.exceptions import HomeAssistantError
 
@@ -40,7 +41,12 @@ async def async_register_services(hass: HomeAssistant) -> None:
 
         if address:
             config_entry = next(
-                (entry for entry in entries if entry.unique_id == address), None
+                (
+                    entry
+                    for entry in entries
+                    if address in (entry.unique_id, entry.data.get(CONF_ADDRESS))
+                ),
+                None,
             )
         elif len(entries) == 1:
             config_entry = entries[0]
@@ -56,7 +62,7 @@ async def async_register_services(hass: HomeAssistant) -> None:
             )
 
         device_data = hass.data[DOMAIN][config_entry.entry_id]["data"]
-        device_address = config_entry.unique_id
+        device_address = config_entry.data.get(CONF_ADDRESS, config_entry.unique_id)
         ble_device = ble_device_for_data(hass, device_data, device_address)
         if not ble_device and not is_cloud_data(device_data):
             raise HomeAssistantError(
